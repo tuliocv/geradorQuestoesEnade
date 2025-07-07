@@ -94,13 +94,13 @@ def extrair_texto_pdf(arquivo_pdf):
         st.error(f"Erro ao ler o arquivo PDF: {e}")
         return None
 
-def gerar_questao_com_llm(prompt, modelo, api_key):
+def gerar_questao_com_llm(prompt, provedor, api_key, nome_modelo):
     """Gera a questão chamando a API do modelo de IA escolhido."""
     try:
-        if modelo == "ChatGPT (OpenAI)":
+        if provedor == "ChatGPT (OpenAI)":
             client = OpenAI(api_key=api_key)
             completion = client.chat.completions.create(
-                model="gpt-3.5-turbo",
+                model=nome_modelo,
                 messages=[
                     {"role": "system", "content": f"Você é um docente especialista do INEP e deve criar uma questão para o ENADE. Siga RIGOROSAMENTE as seguintes regras oficiais: {REQUISITOS_OBRIGATORIOS_ENADE}"},
                     {"role": "user", "content": prompt}
@@ -110,15 +110,15 @@ def gerar_questao_com_llm(prompt, modelo, api_key):
             )
             return completion.choices[0].message.content
 
-        elif modelo == "Gemini (Google)":
+        elif provedor == "Gemini (Google)":
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('Gemini 1.5 Flash')
+            model = genai.GenerativeModel(nome_modelo)
             full_prompt = f"Como um docente especialista do INEP, sua tarefa é criar uma questão para o ENADE. Siga obrigatoriamente as regras abaixo:\n\n{REQUISITOS_OBRIGATORIOS_ENADE}\n\nAgora, com base na encomenda a seguir, gere a questão:\n\n{prompt}"
             response = model.generate_content(full_prompt)
             return response.text
 
     except Exception as e:
-        st.error(f"Erro na comunicação com a API de {modelo}: {e}")
+        st.error(f"Erro na comunicação com a API de {provedor} usando o modelo {nome_modelo}: {e}")
         return None
 
 
@@ -130,13 +130,24 @@ st.markdown("Este aplicativo auxilia na criação de questões para o ENADE, seg
 # --- BARRA LATERAL PARA CONFIGURAÇÕES ---
 with st.sidebar:
     st.header("🔑 Configuração da IA")
-    modelo_ia = st.selectbox("Escolha o modelo de IA", ["ChatGPT (OpenAI)", "Gemini (Google)"])
+    provedor_ia = st.selectbox("Escolha o Provedor de IA", ["ChatGPT (OpenAI)", "Gemini (Google)"])
 
+    modelo_selecionado_ui = ""
     api_key = ""
-    if modelo_ia == "ChatGPT (OpenAI)":
-        api_key = st.text_input("Sua Chave de API da OpenAI", type="password", help="Obrigatorio para usar o ChatGPT.")
-    elif modelo_ia == "Gemini (Google)":
-        api_key = st.text_input("Sua Chave de API do Google AI", type="password", help="Obrigatorio para usar o Gemini.")
+
+    if provedor_ia == "ChatGPT (OpenAI)":
+        api_key = st.text_input("Sua Chave de API da OpenAI", type="password")
+        modelo_selecionado_ui = st.selectbox(
+            "Escolha o Modelo OpenAI",
+            ["gpt-4o (Recomendado)", "gpt-3.5-turbo (Mais Rápido e Barato)"]
+        )
+
+    elif provedor_ia == "Gemini (Google)":
+        api_key = st.text_input("Sua Chave de API do Google AI", type="password")
+        modelo_selecionado_ui = st.selectbox(
+            "Escolha o Modelo Gemini",
+            ["gemini-1.5-pro-latest (Recomendado)", "gemini-1.5-flash-latest (Mais Rápido e Barato)"]
+        )
 
 if not api_key:
     st.warning("Por favor, insira a chave de API na barra lateral para continuar.")
@@ -175,7 +186,7 @@ with tab_pdf:
             st.session_state.fonte_info['link'] = arquivo_pdf.name
 
 
-# --- ETAPA 3: DEFINIÇÃO DO USO DO TEXTO-BASE E ENCOMENDA ---
+# --- ETAPA 3: PREPARAÇÃO DO ITEM E ENCOMENDA ---
 st.header("Etapa 3: Preparação do Item e Encomenda")
 
 if st.session_state.texto_fonte:
@@ -194,7 +205,6 @@ if st.session_state.texto_fonte:
     )
     st.session_state.usar_contextualizacao_ia = (modo_uso.startswith("Pedir para a IA"))
 
-    # Lógica para seleção de parágrafos
     if not st.session_state.usar_contextualizacao_ia:
         paragrafos = [p.strip() for p in st.session_state.texto_fonte.split("\n") if len(p.strip()) >= 150]
         if paragrafos:
@@ -235,20 +245,19 @@ if st.session_state.texto_fonte:
         submitted = st.form_submit_button("🚀 Gerar Questão ENADE")
 
         if submitted:
-            # Validação
             if not st.session_state.fonte_info['source'] or not st.session_state.fonte_info['year']:
                 st.error("Por favor, preencha os campos 'Fonte/Veículo' e 'Ano de Publicação'.")
+            elif not st.session_state.trecho_para_prompt:
+                st.error("Por favor, selecione os parágrafos ou confirme o uso do texto inteiro.")
             else:
-                with st.spinner(f"Aguarde... O especialista do ENADE ({modelo_ia}) está elaborando sua questão."):
-                    # Construção do Prompt Final
+                with st.spinner(f"Aguarde... O especialista do ENADE ({provedor_ia} | {modelo_selecionado_ui}) está elaborando sua questão."):
                     hoje = datetime.now()
-                    meses = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"]
-                    data_acesso = f"{hoje.day:02d} de {meses[hoje.month-1]}. de {hoje.year}"
+                    meses = ["jan.", "fev.", "mar.", "abr.", "maio", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."]
+                    data_acesso = f"{hoje.day} {meses[hoje.month-1]}. {hoje.year}"
                     
                     fonte_info_local = st.session_state.fonte_info
                     fonte_str = f"Fonte: {fonte_info_local.get('source', 'Fonte desconhecida')}, {fonte_info_local.get('year', 's.d.')}. Disponível em: <{fonte_info_local.get('link', 's.l.')}>. Acesso em: {data_acesso}."
                     
-                    # Adapta a instrução do prompt com base na escolha do usuário
                     if st.session_state.usar_contextualizacao_ia:
                         instrucao_texto_base = f"""**1. DOCUMENTO DE REFERÊNCIA (use-o para criar a questão):**
                         "{st.session_state.trecho_para_prompt}"
@@ -283,7 +292,8 @@ if st.session_state.texto_fonte:
                     - Ao final, fora da questão, indique o gabarito no formato: "Gabarito: Letra X".
                     """
                     
-                    st.session_state.questao_gerada = gerar_questao_com_llm(prompt_final, modelo_ia, api_key)
+                    modelo_limpo = modelo_selecionado_ui.split(" ")[0]
+                    st.session_state.questao_gerada = gerar_questao_com_llm(prompt_final, provedor_ia, api_key, modelo_limpo)
 
 # --- ETAPA 4: RESULTADO ---
 st.header("Etapa 4: Questão Gerada")
