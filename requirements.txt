@@ -1,0 +1,6 @@
+streamlit
+openai
+google-generativeai
+newspaper3k
+pandas
+PyPDF2
