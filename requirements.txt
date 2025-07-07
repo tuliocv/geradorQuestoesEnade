@@ -1,5 +1,6 @@
 streamlit
 openai
+google-generativeai
 beautifulsoup4
 requests
 PyPDF2
