@@ -4,7 +4,7 @@ import requests
 import textwrap
 import pandas as pd
 from datetime import datetime
-from newspaper import Article
+from bs4 import BeautifulSoup
 from openai import OpenAI
 import google.generativeai as genai
 import PyPDF2
@@ -30,8 +30,8 @@ if 'usar_contextualizacao_ia' not in st.session_state:
 if 'questao_gerada' not in st.session_state:
     st.session_state.questao_gerada = ""
 
-
 # --- DICIONÁRIO DE ÁREAS ---
+
 AREAS_ENADE = {
     "Ciências Sociais Aplicadas": [
         "Administração", "Arquitetura e Urbanismo", "Biblioteconomia", "Ciências Contábeis",
@@ -53,8 +53,8 @@ AREAS_ENADE = {
     ],
 }
 
-
 # --- REQUISITOS OBRIGATÓRIOS DO ENADE ---
+
 REQUISITOS_OBRIGATORIOS_ENADE = """
 - **Originalidade e Ineditismo**: A questão deve ser totalmente inédita.
 - **Estrutura do Item**: Deve conter um texto-base (situação-estímulo), um enunciado claro e 5 alternativas (A, B, C, D, E).
@@ -70,242 +70,214 @@ REQUISITOS_OBRIGATORIOS_ENADE = """
 # --- FUNÇÕES AUXILIARES ---
 
 @st.cache_data(ttl=3600)
-def extrair_texto_url(url):
-    """Extrai o texto principal de um artigo online."""
+def extrair_texto_url(url: str) -> str | None:
+    """Extrai o texto principal de uma página web usando requests + BeautifulSoup."""
     try:
-        art = Article(url, language='pt')
-        art.download()
-        art.parse()
-        return art.text
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        # Remove scripts, estilos e seções comuns irrelevantes
+        for tag in soup(["script", "style", "header", "footer", "nav", "aside"]):
+            tag.decompose()
+        # Concatena todo o texto visível
+        return " ".join(soup.stripped_strings)
     except Exception as e:
-        st.error(f"Não foi possível extrair o conteúdo do artigo. Tente outro. Erro: {e}")
+        st.error(f"Falha ao extrair texto da URL: {e}")
         return None
 
 @st.cache_data
-def extrair_texto_pdf(arquivo_pdf):
+def extrair_texto_pdf(arquivo_pdf) -> str | None:
     """Extrai texto de um arquivo PDF carregado."""
     try:
-        leitor_pdf = PyPDF2.PdfReader(BytesIO(arquivo_pdf.read()))
-        texto_completo = ""
-        for pagina in leitor_pdf.pages:
-            texto_completo += pagina.extract_text()
-        return texto_completo
+        leitor = PyPDF2.PdfReader(BytesIO(arquivo_pdf.read()))
+        texto = ""
+        for pagina in leitor.pages:
+            texto += pagina.extract_text() or ""
+        return texto
     except Exception as e:
         st.error(f"Erro ao ler o arquivo PDF: {e}")
         return None
 
-def gerar_questao_com_llm(prompt, provedor, api_key, nome_modelo):
+def gerar_questao_com_llm(prompt: str, provedor: str, api_key: str, modelo: str) -> str | None:
     """Gera a questão chamando a API do modelo de IA escolhido."""
     try:
         if provedor == "ChatGPT (OpenAI)":
             client = OpenAI(api_key=api_key)
-            completion = client.chat.completions.create(
-                model=nome_modelo,
+            resp = client.chat.completions.create(
+                model=modelo,
                 messages=[
-                    {"role": "system", "content": f"Você é um docente especialista do INEP e deve criar uma questão para o ENADE. Siga RIGOROSAMENTE as seguintes regras oficiais: {REQUISITOS_OBRIGATORIOS_ENADE}"},
-                    {"role": "user", "content": prompt}
+                    {"role": "system", "content": f"Você é um docente especialista do INEP e deve criar uma questão para o ENADE. Siga RIGOROSAMENTE as regras:\n{REQUISITOS_OBRIGATORIOS_ENADE}"},
+                    {"role": "user",   "content": prompt}
                 ],
                 temperature=0.6,
                 max_tokens=1500
             )
-            return completion.choices[0].message.content
+            return resp.choices[0].message.content
 
         elif provedor == "Gemini (Google)":
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(nome_modelo)
-            full_prompt = f"Como um docente especialista do INEP, sua tarefa é criar uma questão para o ENADE. Siga obrigatoriamente as regras abaixo:\n\n{REQUISITOS_OBRIGATORIOS_ENADE}\n\nAgora, com base na encomenda a seguir, gere a questão:\n\n{prompt}"
-            response = model.generate_content(full_prompt)
-            return response.text
+            gm = genai.GenerativeModel(modelo)
+            full_prompt = f"Como docente especialista do INEP, crie uma questão ENADE seguindo estas regras:\n{REQUISITOS_OBRIGATORIOS_ENADE}\n\nEncomenda:\n{prompt}"
+            resp = gm.generate_content(full_prompt)
+            return resp.text
 
     except Exception as e:
-        st.error(f"Erro na comunicação com a API de {provedor} usando o modelo {nome_modelo}: {e}")
+        st.error(f"Erro ao chamar a API de {provedor}: {e}")
         return None
-
 
 # --- INTERFACE DO STREAMLIT ---
 
 st.title("🎓 Assistente para Elaboração de Questões ENADE")
-st.markdown("Este aplicativo auxilia na criação de questões para o ENADE, seguindo as diretrizes oficiais do INEP. O processo é dividido em 4 etapas.")
+st.markdown("Este app cria questões ENADE seguindo as diretrizes oficiais do INEP em 4 etapas.")
 
-# --- BARRA LATERAL PARA CONFIGURAÇÕES ---
+# --- SIDEBAR: CONFIGURAÇÃO DE IA ---
 with st.sidebar:
-    st.header("🔑 Configuração da IA")
-    provedor_ia = st.selectbox("Escolha o Provedor de IA", ["ChatGPT (OpenAI)", "Gemini (Google)"])
+    st.markdown("## 🔑 Configuração da IA\n**Como obter sua chave de API**\n\n"
+                "- **OpenAI**: platform.openai.com/account/api-keys\n"
+                "- **Google Gemini**: Console Google Cloud → Generative AI → Chaves de API\n")
+    provedor_ia = st.selectbox("Provedor de IA", ["ChatGPT (OpenAI)", "Gemini (Google)"])
+    default_key = (
+        st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+        if provedor_ia == "ChatGPT (OpenAI)"
+        else st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
+    )
+    api_key = st.text_input("Chave de API", value=default_key or "", type="password")
+    modelo_selecionado = st.selectbox(
+        "Modelo",
+        ["gpt-4o", "gpt-3.5-turbo"] if provedor_ia.startswith("ChatGPT") 
+        else ["gemini-1.5-pro-latest", "gemini-1.5-flash-latest"]
+    )
+    if not api_key:
+        st.warning("Insira sua chave de API para continuar.")
+        st.stop()
 
-    modelo_selecionado_ui = ""
-    api_key = ""
-
-    if provedor_ia == "ChatGPT (OpenAI)":
-        api_key = st.text_input("Sua Chave de API da OpenAI", type="password")
-        modelo_selecionado_ui = st.selectbox(
-            "Escolha o Modelo OpenAI",
-            ["gpt-4o (Recomendado)", "gpt-3.5-turbo (Mais Rápido e Barato)"]
-        )
-
-    elif provedor_ia == "Gemini (Google)":
-        api_key = st.text_input("Sua Chave de API do Google AI", type="password")
-        modelo_selecionado_ui = st.selectbox(
-            "Escolha o Modelo Gemini",
-            ["gemini-1.5-pro-latest (Recomendado)", "gemini-1.5-flash-latest (Mais Rápido e Barato)"]
-        )
-
-if not api_key:
-    st.warning("Por favor, insira a chave de API na barra lateral para continuar.")
-    st.stop()
-
-
-# --- ETAPA 1: DEFINIÇÃO DO ESCOPO ---
-st.header("Etapa 1: Definição do Escopo da Questão")
-
+# --- ETAPA 1: ESCOPO ---
+st.header("Etapa 1: Definição do Escopo")
 col1, col2 = st.columns(2)
 with col1:
-    area_escolhida = st.selectbox("Selecione a Grande Área do Conhecimento", list(AREAS_ENADE.keys()))
+    area = st.selectbox("Grande Área do Conhecimento", list(AREAS_ENADE.keys()))
 with col2:
-    curso_escolhido = st.selectbox("Selecione o Curso", AREAS_ENADE[area_escolhida])
+    curso = st.selectbox("Curso", AREAS_ENADE[area])
+assunto = st.text_input("Assunto ou tópico central", placeholder="Ex: Estruturas de Controle em algoritmos")
 
-assunto = st.text_input("Qual o assunto ou tópico central da questão?", placeholder="Ex: Uso da IA na atribuição de processos de arbitragem")
-
-
-# --- ETAPA 2: FORNECIMENTO DO TEXTO-BASE ---
-st.header("Etapa 2: Fornecimento do Texto-Base (Situação-Estímulo)")
-
-tab_url, tab_pdf = st.tabs(["🔗 Fornecer URL de Artigo", "📄 Carregar Arquivo PDF"])
+# --- ETAPA 2: TEXTO-BASE ---
+st.header("Etapa 2: Texto-Base (Situação-Estímulo)")
+tab_url, tab_pdf = st.tabs(["🔗 URL", "📄 PDF"])
 
 with tab_url:
-    url_artigo = st.text_input("Insira a URL do artigo ou página da web:")
-    if st.button("Analisar URL"):
-        with st.spinner("Analisando e extraindo texto da URL..."):
-            st.session_state.texto_fonte = extrair_texto_url(url_artigo)
-            st.session_state.fonte_info['link'] = url_artigo
+    url_artigo = st.text_input("URL do artigo/página:")
+    if st.button("Extrair da URL"):
+        st.session_state.texto_fonte = extrair_texto_url(url_artigo)
+        st.session_state.fonte_info.update({"link": url_artigo})
 
 with tab_pdf:
-    arquivo_pdf = st.file_uploader("Carregue um arquivo PDF:", type=['pdf'])
-    if arquivo_pdf is not None:
-        with st.spinner("Analisando e extraindo texto do PDF..."):
-            st.session_state.texto_fonte = extrair_texto_pdf(arquivo_pdf)
-            st.session_state.fonte_info['link'] = arquivo_pdf.name
+    pdf_file = st.file_uploader("Faça upload do PDF", type=["pdf"])
+    if pdf_file:
+        st.session_state.texto_fonte = extrair_texto_pdf(pdf_file)
+        st.session_state.fonte_info.update({"link": pdf_file.name})
 
-
-# --- ETAPA 3: PREPARAÇÃO DO ITEM E ENCOMENDA ---
-st.header("Etapa 3: Preparação do Item e Encomenda")
-
+# --- ETAPA 3: PREPARAÇÃO DA ENCOMENDA ---
+st.header("Etapa 3: Preparação da Encomenda")
 if st.session_state.texto_fonte:
-    st.success("Material de base carregado com sucesso!")
-    with st.expander("Ver o texto extraído"):
-        st.text_area("Texto Completo", st.session_state.texto_fonte, height=300)
+    st.success("Material de base pronto!")
+    with st.expander("Ver texto extraído"):
+        st.text_area("Texto-Fonte", st.session_state.texto_fonte, height=300)
 
-    st.subheader("3.1. Como usar o material de base?")
-    modo_uso = st.radio(
-        "Escolha como o texto fornecido será utilizado:",
-        [
-            "Selecionar um ou mais parágrafos para usar como texto-base literal.",
-            "Pedir para a IA criar um novo texto-base conciso e contextualizado a partir do documento inteiro."
-        ],
-        key="modo_uso_radio"
+    modo = st.radio(
+        "Uso do texto-fonte:",
+        ["Usar parágrafos selecionados", "Gerar novo Texto-Base pela IA"],
+        key="modo"
     )
-    st.session_state.usar_contextualizacao_ia = (modo_uso.startswith("Pedir para a IA"))
+    st.session_state.usar_contextualizacao_ia = (modo == "Gerar novo Texto-Base pela IA")
 
     if not st.session_state.usar_contextualizacao_ia:
-        paragrafos = [p.strip() for p in st.session_state.texto_fonte.split("\n") if len(p.strip()) >= 150]
-        if paragrafos:
-            opcoes_paragrafos = st.multiselect(
-                "Selecione os parágrafos que formarão o texto-base:",
-                options=paragrafos,
-                format_func=lambda p: textwrap.shorten(p, width=150, placeholder="...")
-            )
-            if opcoes_paragrafos:
-                st.session_state.trecho_para_prompt = "\n\n".join(opcoes_paragrafos)
+        pars = [p for p in st.session_state.texto_fonte.split("\n") if len(p.strip()) > 100]
+        selecionados = st.multiselect(
+            "Selecione parágrafos para texto-base",
+            options=pars,
+            format_func=lambda p: textwrap.shorten(p, 100, placeholder="...")
+        )
+        if selecionados:
+            st.session_state.trecho_para_prompt = "\n\n".join(selecionados)
         else:
-            st.warning("Não foram encontrados parágrafos longos (>150 caracteres). O texto inteiro será usado como referência.")
+            st.warning("Nenhum parágrafo longo encontrado; usará todo o texto.")
             st.session_state.trecho_para_prompt = st.session_state.texto_fonte
     else:
-        st.info("A IA usará o documento inteiro para criar um novo texto-base.")
+        st.info("A IA criará um novo Texto-Base a partir de todo o documento.")
         st.session_state.trecho_para_prompt = st.session_state.texto_fonte
 
-    st.subheader("3.2. Preenchimento da Encomenda ENADE")
-    with st.form("encomenda_form"):
-        col_fonte1, col_fonte2 = st.columns(2)
-        with col_fonte1:
-            st.session_state.fonte_info['source'] = st.text_input("Fonte/Veículo", placeholder="Ex: G1, Consultor Jurídico, Nome do Livro")
-        with col_fonte2:
-            st.session_state.fonte_info['year'] = st.text_input("Ano de Publicação", placeholder="Ex: 2024")
+    # Dados da encomenda
+    with st.form("encomenda"):
+        fonte = st.text_input("Fonte/Veículo", placeholder="Ex: G1, Livro X")
+        ano   = st.text_input("Ano de Publicação", placeholder="Ex: 2024")
+        tipo_item = st.selectbox("Tipo de item", ["Múltipla Escolha", "Asserção-Razão", "Discursivo"])
+        perfil    = st.text_input("Perfil do egresso", placeholder="Ex: Ético e reflexivo")
+        competencia = st.text_input("Competência", placeholder="Ex: Analisar conflitos éticos")
+        objeto    = st.text_input("Objeto de conhecimento", placeholder="Ex: Legislação e ética")
+        dificuldade = st.select_slider("Dificuldade", ["Fácil", "Média", "Difícil"], value="Média")
+        info_add  = st.text_area("Instrução adicional (opcional)")
 
-        st.markdown("---")
-
-        col_form1, col_form2 = st.columns(2)
-        with col_form1:
-            tipo_item = st.selectbox("Tipo de item", ["Múltipla Escolha", "Asserção-Razão", "Discursivo"])
-            perfil = st.text_input("Perfil do egresso", placeholder="Ex: Ético, crítico e reflexivo")
-            competencia = st.text_input("Competência a ser avaliada", placeholder="Ex: Analisar e solucionar conflitos de natureza ética")
-        with col_form2:
-            objeto_conhecimento = st.text_input("Objeto de conhecimento", placeholder="Ex: Legislação sobre arbitragem e ética profissional")
-            dificuldade = st.select_slider("Nível de Dificuldade", ["Fácil", "Média", "Difícil"], value="Média")
-            info_adicional = st.text_area("Instrução adicional para a IA (opcional)", placeholder="Ex: Foque no conflito entre inovação e deveres legais.")
-
-        submitted = st.form_submit_button("🚀 Gerar Questão ENADE")
-
-        if submitted:
-            if not st.session_state.fonte_info['source'] or not st.session_state.fonte_info['year']:
-                st.error("Por favor, preencha os campos 'Fonte/Veículo' e 'Ano de Publicação'.")
-            elif not st.session_state.trecho_para_prompt:
-                st.error("Por favor, selecione os parágrafos ou confirme o uso do texto inteiro.")
+        if st.form_submit_button("🚀 Gerar Questão"):
+            if not fonte or not ano or not st.session_state.trecho_para_prompt:
+                st.error("Preencha Fonte, Ano e selecione o texto-base.")
             else:
-                with st.spinner(f"Aguarde... O especialista do ENADE ({provedor_ia} | {modelo_selecionado_ui}) está elaborando sua questão."):
-                    hoje = datetime.now()
-                    meses = ["jan.", "fev.", "mar.", "abr.", "maio", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."]
-                    data_acesso = f"{hoje.day} {meses[hoje.month-1]}. {hoje.year}"
-                    
-                    fonte_info_local = st.session_state.fonte_info
-                    fonte_str = f"Fonte: {fonte_info_local.get('source', 'Fonte desconhecida')}, {fonte_info_local.get('year', 's.d.')}. Disponível em: <{fonte_info_local.get('link', 's.l.')}>. Acesso em: {data_acesso}."
-                    
-                    if st.session_state.usar_contextualizacao_ia:
-                        instrucao_texto_base = f"""**1. DOCUMENTO DE REFERÊNCIA (use-o para criar a questão):**
-                        "{st.session_state.trecho_para_prompt}"
-                        
-                        **INSTRUÇÃO ESPECIAL:** A partir do DOCUMENTO DE REFERÊNCIA acima, sua primeira tarefa é criar um novo **Texto-Base** conciso, objetivo e perfeitamente adequado para uma questão do ENADE. Este novo Texto-Base deve ser o ponto de partida para a questão. Em seguida, elabore a questão completa (enunciado e alternativas) com base no Texto-Base que você criou.
-                        """
-                    else:
-                        instrucao_texto_base = f"""**1. TEXTO-BASE LITERAL (use-o exatamente como está na questão):**
-                        "{st.session_state.trecho_para_prompt}"
-                        """
-                    
-                    prompt_final = f"""
-                    **ENCOMENDA DE ITEM PARA O ENADE**
+                hoje = datetime.now()
+                meses = ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."]
+                data_acesso = f"{hoje.day} {meses[hoje.month-1]} {hoje.year}"
+                fonte_str = (
+                    f"Fonte: {fonte}, {ano}. Disponível em: "
+                    f"<{st.session_state.fonte_info['link']}>. Acesso em: {data_acesso}."
+                )
 
-                    {instrucao_texto_base}
-                    (A referência da fonte para a questão deve ser: {fonte_str})
+                if st.session_state.usar_contextualizacao_ia:
+                    instrucao_tb = (
+                        "**1. CRIAR NOVO TEXTO-BASE:**\n"
+                        f"{st.session_state.trecho_para_prompt}\n\n"
+                        "Em seguida, elabore a questão completa."
+                    )
+                else:
+                    instrucao_tb = (
+                        "**1. TEXTO-BASE LITERAL:**\n"
+                        f"{st.session_state.trecho_para_prompt}"
+                    )
 
-                    **2. DADOS DA ENCOMENDA:**
-                    - **Curso:** {curso_escolhido}
-                    - **Tipo de item a ser elaborado:** {tipo_item}
-                    - **Perfil do egresso esperado:** {perfil}
-                    - **Competência a ser avaliada:** {competencia}
-                    - **Objeto de conhecimento principal:** {objeto_conhecimento}
-                    - **Nível de dificuldade:** {dificuldade}
-                    - **Instrução adicional para a IA:** {info_adicional}
+                prompt_final = f"""
+**ENCOMENDA ENADE**
 
-                    **3. TAREFA FINAL:**
-                    Elabore a questão completa e pronta para uma avaliação impressa, contendo:
-                    - Texto-base (seja o que você criou ou o literal fornecido) com a referência completa no formato ABNT simplificado.
-                    - Um enunciado claro e objetivo.
-                    - Cinco alternativas (A, B, C, D, E).
-                    - Ao final, fora da questão, indique o gabarito no formato: "Gabarito: Letra X".
-                    """
-                    
-                    modelo_limpo = modelo_selecionado_ui.split(" ")[0]
-                    st.session_state.questao_gerada = gerar_questao_com_llm(prompt_final, provedor_ia, api_key, modelo_limpo)
+{instrucao_tb}
+
+{fonte_str}
+
+**Dados da Encomenda:**
+- Curso: {curso}
+- Assunto: {assunto}
+- Tipo de item: {tipo_item}
+- Perfil do egresso: {perfil}
+- Competência: {competencia}
+- Objeto de conhecimento: {objeto}
+- Dificuldade: {dificuldade}
+- Instrução adicional: {info_add}
+
+**Tarefa:** Gere a questão completa com:
+1) Texto-base (ABNT simplificado);
+2) Enunciado claro;
+3) Cinco alternativas (A-E);
+4) Gabarito no final: "Gabarito: Letra X".
+"""
+                modelo_tag = modelo_selecionado.split("-")[0]
+                st.session_state.questao_gerada = gerar_questao_com_llm(
+                    prompt_final, provedor_ia, api_key, modelo_tag
+                )
 
 # --- ETAPA 4: RESULTADO ---
 st.header("Etapa 4: Questão Gerada")
-
 if st.session_state.questao_gerada:
     st.markdown(st.session_state.questao_gerada)
-
     st.download_button(
-        label="📥 Baixar Questão (.txt)",
+        "📥 Baixar como .txt",
         data=st.session_state.questao_gerada,
-        file_name=f"questao_enade_{curso_escolhido.replace(' ', '_')}_{assunto.replace(' ', '_')[:20]}.txt",
+        file_name=f"questao_{curso.replace(' ', '_')}.txt",
         mime="text/plain"
     )
 else:
-    st.info("Preencha as etapas anteriores para que a questão gerada apareça aqui.")
+    st.info("Complete as etapas acima para gerar sua questão ENADE.")
