@@ -23,18 +23,18 @@ BLOOM_VERBS = {
 st.set_page_config(page_title="Gerador de Questões ENADE", page_icon="🎓", layout="wide")
 st.sidebar.header("🔑 Configuração da API")
 api_key = st.sidebar.text_input("Chave OpenAI", type="password")
-model = st.sidebar.selectbox("Modelo GPT", ["gpt-4o-mini", "gpt-3.5-turbo"])
+model    = st.sidebar.selectbox("Modelo GPT", ["gpt-4o-mini", "gpt-3.5-turbo"])
 if not api_key:
     st.sidebar.warning("Informe sua chave da OpenAI para continuar.")
     st.stop()
 
-# --- Funções auxiliares ---
+# --- AUXILIARES ---
 @st.cache_data(ttl=3600)
 def extrair_texto_url(url: str) -> str | None:
     try:
         r = requests.get(url, timeout=10); r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
-        for tag in soup(["script","style","header","footer","nav","aside"]):
+        for tag in soup(["script","style","nav","footer","header","aside"]):
             tag.decompose()
         return " ".join(soup.stripped_strings)
     except Exception as e:
@@ -45,191 +45,175 @@ def extrair_texto_url(url: str) -> str | None:
 def extrair_texto_pdf(upload) -> str | None:
     try:
         reader = PyPDF2.PdfReader(BytesIO(upload.read()))
-        return "".join(page.extract_text() or "" for page in reader.pages)
+        return "".join(p.extract_text() or "" for p in reader.pages)
     except Exception as e:
         st.error(f"Erro ao ler PDF: {e}")
         return None
 
-def gerar_questao_llm(system_prompt: str, user_prompt: str) -> str:
+def chamar_llm(prompts, temperature=0.7, max_tokens=300):
     client = OpenAI(api_key=api_key)
     resp = client.chat.completions.create(
         model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user",   "content": user_prompt}
-        ],
-        temperature=0.3,
-        max_tokens=1500
-    )
-    return resp.choices[0].message.content
-
-def gerar_llm(prompt: str, role_system: str="user", temperature=0.7, max_tokens=300) -> str:
-    client = OpenAI(api_key=api_key)
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[{"role": role_system, "content": prompt}],
+        messages=prompts,
         temperature=temperature,
         max_tokens=max_tokens
     )
     return resp.choices[0].message.content.strip()
 
-# --- 2. Escopo ---
-st.header("1. Escopo da Questão")
+# --- 2. ESCOPO ---
+st.header("1. Definição do Escopo")
 area    = st.text_input("Área do conhecimento", placeholder="Ex: Engenharias")
-curso   = st.text_input("Curso",               placeholder="Ex: Engenharia de Software")
+curso   = st.text_input("Curso",              placeholder="Ex: Engenharia de Software")
 assunto = st.text_input("Tópico / Assunto central", placeholder="Ex: IA na arbitragem")
 
-# --- 3. Carregar Texto-Base ---
-st.header("2. Texto-Base (situação-estímulo)")
-metodo = st.radio("Origem do texto-base:", ["URL", "PDF"], horizontal=True)
-if metodo == "URL":
+# --- 3. CARREGAR TEXTO-BASE ---
+st.header("2. Carregue o Texto-Base")
+metodo = st.radio("Origem:", ["URL","PDF"], horizontal=True)
+if metodo=="URL":
     url = st.text_input("Cole a URL completa")
     if st.button("▶️ Extrair de URL"):
         txt = extrair_texto_url(url)
-        if txt:
-            st.session_state.texto_fonte = txt
-            st.session_state.fonte_link = url
-elif metodo == "PDF":
+        if txt: 
+            st.session_state.full_text = txt
+            st.session_state.link      = url
+elif metodo=="PDF":
     pdf = st.file_uploader("Envie um PDF", type="pdf")
     if pdf:
         txt = extrair_texto_pdf(pdf)
         if txt:
-            st.session_state.texto_fonte = txt
-            st.session_state.fonte_link = pdf.name
+            st.session_state.full_text = txt
+            st.session_state.link      = pdf.name
 
-if st.session_state.get("texto_fonte"):
-    with st.expander("Ver / editar texto-base"):
-        st.session_state.texto_fonte = st.text_area(
-            "Texto-Fonte", st.session_state.texto_fonte, height=300
+if st.session_state.get("full_text"):
+    st.success("Texto-base carregado!")
+    with st.expander("Ver / editar texto-base completo"):
+        st.session_state.full_text = st.text_area(
+            "Texto completo", st.session_state.full_text, height=300
         )
 
-# --- 4. Trecho-Base ---
-st.header("3. Trecho-Base")
-if st.session_state.get("texto_fonte"):
-    modo_tb = st.radio("Como obter o trecho-base?", ["Selecionar parágrafo(s)", "Resumo automático"], horizontal=True)
-    if modo_tb == "Selecionar parágrafo(s)":
-        paras = [p.strip() for p in st.session_state.texto_fonte.split("\n") if len(p.strip())>80]
-        sel = st.multiselect(
-            "Escolha parágrafo(s):", paras,
-            format_func=lambda p: textwrap.shorten(p, 120, placeholder="…")
-        )
-        if sel:
-            st.session_state.trecho = "\n\n".join(sel)
+# --- 4. GERAR TEXTO-BASE pelo LLM ---
+st.header("3. Texto-Base (selecionado pela IA)")
+if st.session_state.get("full_text") and not st.session_state.get("text_base"):
+    prompt = [
+        {"role":"system","content":"Você é um assistente que seleciona trechos para questões ENADE."},
+        {"role":"user","content":
+            "Escolha um trecho de 100–200 palavras do texto abaixo "
+            "para servir de TEXTO-BASE em uma questão ENADE:\n\n"
+            + st.session_state.full_text}
+    ]
+    tb = chamar_llm(prompt, temperature=0.5, max_tokens=200)
+    st.session_state.text_base = tb
+
+if st.session_state.get("text_base"):
+    st.session_state.text_base = st.text_area(
+        "Trecho selecionado (edite se desejar):",
+        value=st.session_state.text_base,
+        height=150
+    )
+
+# --- 5. QUESTION PARAMETERS & Bloom ---
+st.header("4. Parâmetros da Questão")
+with st.form("params_form"):
+    perfil      = st.text_input("Perfil do egresso")
+    competencia = st.text_input("Competência")
+    objeto      = st.text_input("Objeto de conhecimento")
+    dificuldade = st.select_slider("Nível de dificuldade", ["Fácil","Média","Difícil"], value="Média")
+    extra       = st.text_area("Observações adicionais (opcional)")
+
+    st.subheader("Taxonomia de Bloom")
+    modo_b = st.radio("Verbos de Bloom por:", ["Faixa de níveis","Nível único"], horizontal=True)
+    if modo_b=="Faixa de níveis":
+        faixa = st.select_slider("Faixa:", options=BLOOM_LEVELS,
+                                 value=(BLOOM_LEVELS[0], BLOOM_LEVELS[-1]))
+        i0,i1 = BLOOM_LEVELS.index(faixa[0]), BLOOM_LEVELS.index(faixa[1])
+        verbs = [v for lvl in BLOOM_LEVELS[i0:i1+1] for v in BLOOM_VERBS[lvl]]
     else:
-        if st.button("🔎 Resumir texto completo"):
-            prompt = (
-                "Resuma em até 3 frases este texto para servir de base "
-                "a uma situação-problema ENADE:\n\n" + st.session_state.texto_fonte
-            )
-            resumo = gerar_llm(prompt, role_system="user", temperature=0.5, max_tokens=200)
-            st.session_state.trecho = resumo
-        if st.session_state.get("trecho"):
-            st.session_state.trecho = st.text_area(
-                "Resumo (edite se quiser)", st.session_state.trecho, height=150
-            )
+        lvl = st.selectbox("Nível:", BLOOM_LEVELS)
+        verbs = BLOOM_VERBS[lvl]
+    selected_verbs = st.multiselect("Selecione verbos:", verbs)
 
-# --- 5. Contexto ---
-st.header("4. Contexto (situação-problema)")
-if st.session_state.get("trecho"):
-    if not st.session_state.get("contexto"):
-        prompt = (
-            "Com base neste trecho, gere UMA BREVE situação-problema profissional "
-            "e relevante para uma questão ENADE. Retorne apenas o texto:\n\n"
-            + st.session_state.trecho
-        )
-        ctx = gerar_llm(prompt, role_system="user", temperature=0.7, max_tokens=300)
-        st.session_state.contexto = ctx
-    st.session_state.contexto = st.text_area(
-        "Edite o contexto se necessário:", st.session_state.contexto, height=120
+    gerar_params = st.form_submit_button("▶️ Confirmar Parâmetros")
+
+if gerar_params:
+    st.success("Parâmetros definidos.")
+
+# --- 6. GERAR CONTEXTUALIZAÇÃO pelo LLM ---
+st.header("5. Contextualização (gerada pela IA)")
+if st.session_state.get("text_base") and gerar_params and not st.session_state.get("context"):
+    prompt = [
+        {"role":"system","content":"Você elabora contextos para questões ENADE."},
+        {"role":"user","content":
+            f"Com base neste TEXTO-BASE e nos parâmetros:\n"
+            f"Perfil: {perfil}\nCompetência: {competencia}\nObjeto: {objeto}\n"
+            f"Dificuldade: {dificuldade}\nVerbos de Bloom: {', '.join(selected_verbs)}\n"
+            f"Observações: {extra}\n\n"
+            f"TEXTO-BASE:\n{st.session_state.text_base}\n\n"
+            "Gere uma breve contextualização (situação-problema)."}
+    ]
+    ctx = chamar_llm(prompt, temperature=0.7, max_tokens=200)
+    st.session_state.context = ctx
+
+if st.session_state.get("context"):
+    st.session_state.context = st.text_area(
+        "Contextualização (edite se quiser):",
+        value=st.session_state.context,
+        height=120
     )
 
-# --- 6. Referência ABNT (prefilled & editável) ---
-st.header("5. Referência ABNT")
-if st.session_state.get("fonte_link"):
-    hoje = datetime.now()
-    meses = ["jan.","fev.","mar.","abr.","mai.","jun.","jul.","ago.","set.","out.","nov.","dez."]
-    acesso = f"{hoje.day} {meses[hoje.month-1]} {hoje.year}"
-    default_abnt = (
-        f"{st.session_state.fonte_link}. Disponível em: <{st.session_state.fonte_link}>. "
-        f"Acesso em: {acesso}."
-    )
-    st.session_state.referencia = st.text_area(
-        "Referência ABNT (edite se quiser):", default_abnt, height=100
-    )
-
-# --- 7. Parâmetros ENADE & Bloom & Geração ---
+# --- 7. GERAR QUESTÃO FINAL ---
 st.header("6. Gerar Questão ENADE")
-if all(k in st.session_state for k in ("contexto","trecho","referencia")):
-    with st.form("enade_form"):
-        tipo   = st.selectbox("Tipo de item", ["Múltipla Escolha", "Asserção-Razão", "Discursivo"])
-        perfil = st.text_input("Perfil do egresso", placeholder="Ex: crítico e reflexivo")
-        comp   = st.text_input("Competência", placeholder="Ex: analisar conflitos éticos")
-        obj    = st.text_input("Objeto de conhecimento", placeholder="Ex: ética profissional")
-        diff   = st.select_slider("Dificuldade", ["Fácil","Média","Difícil"], value="Média")
-        extra  = st.text_area("Info. adicional (opcional)")
-
-        st.subheader("Taxonomia de Bloom")
-        modo_bloom = st.radio(
-            "Como selecionar verbos de Bloom?",
-            ["Por faixa de níveis", "Por nível único"], horizontal=True
-        )
-        if modo_bloom == "Por faixa de níveis":
-            faixa = st.select_slider(
-                "Faixa cognitiva (menor → maior):", options=BLOOM_LEVELS,
-                value=(BLOOM_LEVELS[0], BLOOM_LEVELS[-1])
-            )
-            idx0, idx1 = BLOOM_LEVELS.index(faixa[0]), BLOOM_LEVELS.index(faixa[1])
-            niveis = BLOOM_LEVELS[idx0:idx1+1]
-            verbos = [v for lvl in niveis for v in BLOOM_VERBS[lvl]]
-        else:
-            nivel = st.selectbox("Nível cognitivo:", BLOOM_LEVELS)
-            verbos = BLOOM_VERBS[nivel]
-        selected_verbs = st.multiselect("Verbos de Bloom:", options=verbos)
-
-        submit = st.form_submit_button("🚀 Gerar Questão")
-    if submit:
+if st.session_state.get("text_base") and st.session_state.get("context"):
+    if st.button("🚀 Gerar Questão"):
         system_prompt = """
 Você é docente especialista INEP. Crie uma questão padrão ENADE, seguindo rigorosamente:
-- Originalidade total
-- Texto-base indispensável e referenciado
-- Enunciado afirmativo e claro
-- 5 alternativas A–E, 1 correta
+- Texto-base definido acima
+- Contextualização definida acima
+- Enunciado afirmativo, claro e objetivo
+- 5 alternativas (A–E), só 1 correta
 - Distratores plausíveis
-- Linguagem formal, norma-padrão
+- Linguagem formal, impessoal, norma-padrão
 - Foco em aplicação (situação-problema)
-- Evitar termos absolutos (sempre, nunca, apenas, etc.)
-- Ao final indique "Gabarito: Letra X"
+- Evitar termos absolutos (sempre,nunca,apenas,etc.)
+- Ao final, indique "Gabarito: Letra X"
 - Inclua justificativas breves para cada alternativa
 """
         user_prompt = f"""
-Contexto:
-{st.session_state.contexto}
+TEXTO-BASE:
+{st.session_state.text_base}
 
-Texto-Base:
-{st.session_state.trecho}
+CONTEXTO:
+{st.session_state.context}
 
-Referência (ABNT):
-{st.session_state.referencia}
-
-Encomenda:
+Parâmetros:
 - Área: {area}
 - Curso: {curso}
 - Assunto: {assunto}
-- Tipo: {tipo}
 - Perfil: {perfil}
-- Competência: {comp}
-- Objeto de conhecimento: {obj}
-- Dificuldade: {diff}
-- Verbos de Bloom: {', '.join(selected_verbs) if selected_verbs else 'nenhum especificado'}
+- Competência: {competencia}
+- Objeto de conhecimento: {objeto}
+- Dificuldade: {dificuldade}
+- Verbos de Bloom: {', '.join(selected_verbs) if selected_verbs else 'nenhum'}
 - Observações: {extra}
+
+Agora, gere o ENUNCIADO da questão, as 5 alternativas (A–E), o gabarito e as justificativas em JSON:
+{{
+  "enunciado": "...",
+  "alternativas":{{"A":"", "B":"", "C":"", "D":"", "E":""}},
+  "gabarito": "Letra X",
+  "justificativas":{{"A":"", "B":"", "C":"", "D":"", "E":""}}
+}}
 """
-        raw = gerar_questao_llm(system_prompt, user_prompt)
+        raw = chamar_llm(
+            [{"role":"system","content":system_prompt},
+             {"role":"user","content":user_prompt}],
+            temperature=0.3, max_tokens=1000
+        )
         try:
             st.session_state.questao = json.loads(raw)
         except:
             st.session_state.questao = raw
 
-# --- 8. Resultado & Gerar Outra Questão ---
+# --- 8. RESULTADO & GERAR OUTRA ---
 st.header("7. Resultado")
 q = st.session_state.get("questao")
 if q:
@@ -243,6 +227,6 @@ if q:
     else:
         st.markdown(q)
     if st.button("🔄 Gerar outra questão"):
-        for key in ("texto_fonte","trecho","contexto","referencia","questao"):
-            st.session_state.pop(key, None)
+        for k in ("text_base","context","questao"):
+            st.session_state.pop(k, None)
         st.experimental_rerun()
