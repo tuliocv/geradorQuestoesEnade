@@ -1,7 +1,9 @@
 streamlit
 openai
 google-generativeai
-requests
 newspaper3k
-pandas
+lxml
+beautifulsoup4
 PyPDF2
+pandas
+requests
