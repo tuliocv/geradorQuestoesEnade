@@ -1,6 +1,7 @@
 streamlit
 openai
-requests
 beautifulsoup4
+requests
 PyPDF2
 python-docx
+pandas
