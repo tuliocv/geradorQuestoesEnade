@@ -17,7 +17,7 @@ st.set_page_config(
 )
 
 # --- ESTADO DA SESSÃO ---
-for key in ("texto_fonte", "trecho_para_prompt", "questao_bruta", "questao"):
+for key in ("texto_fonte", "trecho_para_prompt", "contexto", "questao_bruta", "questao"):
     if key not in st.session_state:
         st.session_state[key] = "" if key != "questao" else None
 if "last_pdf" not in st.session_state:
@@ -27,29 +27,9 @@ if "fonte_info" not in st.session_state:
 
 # --- DICIONÁRIO DE ÁREAS ---
 AREAS_ENADE = {
-    "Ciências Sociais Aplicadas": [
-        "Administração", "Arquitetura e Urbanismo", "Biblioteconomia",
-        "Ciências Contábeis", "Ciências Econômicas", "Comunicação Social",
-        "Direito", "Design", "Gestão de Políticas Públicas", "Jornalismo",
-        "Publicidade e Propaganda", "Relações Internacionais", "Serviço Social",
-        "Turismo"
-    ],
-    "Engenharias": [
-        "Engenharia Aeronáutica", "Engenharia Agrícola", "Engenharia Ambiental",
-        "Engenharia Biomédica", "Engenharia Cartográfica", "Engenharia Civil",
-        "Engenharia de Alimentos", "Engenharia de Computação",
-        "Engenharia de Controle e Automação", "Engenharia de Materiais",
-        "Engenharia de Minas", "Engenharia de Petróleo", "Engenharia de Produção",
-        "Engenharia de Software", "Engenharia Elétrica", "Engenharia Eletrônica",
-        "Engenharia Florestal", "Engenharia Mecânica", "Engenharia Mecatrônica",
-        "Engenharia Metalúrgica", "Engenharia Naval", "Engenharia Química",
-        "Engenharia Têxtil"
-    ],
-    "Ciências da Saúde": [
-        "Educação Física", "Enfermagem", "Farmácia", "Fisioterapia",
-        "Fonoaudiologia", "Medicina", "Medicina Veterinária", "Nutrição",
-        "Odontologia", "Saúde Coletiva"
-    ],
+    "Ciências Sociais Aplicadas": [...],
+    "Engenharias": [...],
+    "Ciências da Saúde": [...],
 }
 
 # --- CHECKLIST E FORMATO DE SAÍDA ---
@@ -108,13 +88,31 @@ def extrair_texto_url(url: str) -> str | None:
 def extrair_texto_pdf(upload) -> str | None:
     try:
         reader = PyPDF2.PdfReader(BytesIO(upload.read()))
-        text = "".join(page.extract_text() or "" for page in reader.pages)
-        return text
+        return "".join(page.extract_text() or "" for page in reader.pages)
     except Exception as e:
         st.error(f"Falha ao ler PDF: {e}")
         return None
 
-# --- GERAÇÃO PELO OPENAI ---
+# --- GERAÇÃO DE CONTEXTO ---
+def gerar_contexto_llm(texto_base: str, api_key: str, modelo: str) -> str:
+    prompt = f"""
+Com base neste trecho de texto-base, gere uma breve situação-problema (contexto) profissional e relevante para uma questão ENADE:
+
+\"\"\"{texto_base}\"\"\"
+"""
+    client = OpenAI(api_key=api_key)
+    resp = client.chat.completions.create(
+        model=modelo,
+        messages=[
+            {"role": "system", "content": "Você é um assistente que elabora contextos para questões ENADE."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.7,
+        max_tokens=300
+    )
+    return resp.choices[0].message.content.strip()
+
+# --- GERAÇÃO DA QUESTÃO ---
 def gerar_questao_llm(prompt: str, api_key: str, modelo: str) -> str:
     client = OpenAI(api_key=api_key)
     resp = client.chat.completions.create(
@@ -128,16 +126,13 @@ def gerar_questao_llm(prompt: str, api_key: str, modelo: str) -> str:
     )
     return resp.choices[0].message.content
 
-# --- SIDEBAR: CONFIGURAÇÃO DA API ---
+# --- SIDEBAR: API KEY E MODELO ---
 with st.sidebar:
-    st.markdown(
-        "## 🔑 Configuração da API\n"
-        "- **OpenAI**: platform.openai.com/account/api-keys"
-    )
+    st.markdown("## 🔑 Configuração da API\n- **OpenAI**: platform.openai.com/account/api-keys")
     api_key = st.text_input("Chave da OpenAI", type="password")
     modelo = st.selectbox("Modelo", ["gpt-4o-mini", "gpt-3.5-turbo"])
     if not api_key:
-        st.warning("Insira sua chave de API para continuar.")
+        st.warning("Insira sua chave de API.")
         st.stop()
 
 # --- ETAPA 1: ESCOPO ---
@@ -169,7 +164,6 @@ if st.session_state.texto_fonte:
     st.success("Texto-base carregado!")
     with st.expander("Ver texto extraído"):
         st.text_area("Texto-Fonte", st.session_state.texto_fonte, height=300)
-    # seleção de parágrafos
     pars = [p for p in st.session_state.texto_fonte.split("\n") if len(p.strip()) > 100]
     sel = st.multiselect(
         "Selecione parágrafos para Texto-Base",
@@ -178,37 +172,50 @@ if st.session_state.texto_fonte:
     )
     st.session_state.trecho_para_prompt = "\n\n".join(sel) if sel else st.session_state.texto_fonte
 
-# --- ETAPA 3: CONTEXTO E PARÂMETROS ---
-if st.session_state.trecho_para_prompt:
-    st.header("3. Contexto e Parâmetros ENADE")
-    contexto = st.text_area("Contexto (situação-problema)", "")
+# --- ETAPA 3: GERAÇÃO AUTOMÁTICA DO CONTEXTO ---
+if st.session_state.trecho_para_prompt and not st.session_state.contexto:
+    with st.spinner("Gerando contexto automaticamente..."):
+        st.session_state.contexto = gerar_contexto_llm(
+            st.session_state.trecho_para_prompt, api_key, modelo
+        )
+
+# permite edição manual do contexto
+if st.session_state.contexto:
+    st.header("3. Contexto (situação-problema)")
+    st.session_state.contexto = st.text_area(
+        "Edite o contexto conforme desejar:",
+        value=st.session_state.contexto,
+        height=150
+    )
+
+# --- ETAPA 4: PARÂMETROS E GERAÇÃO DA QUESTÃO ---
+if st.session_state.contexto:
+    st.header("4. Parâmetros ENADE e Geração")
     with st.form("enade_form"):
-        fonte      = st.text_input("Fonte/Veículo", "")
-        ano        = st.text_input("Ano", "")
-        tipo_item  = st.selectbox("Tipo de item", ["Múltipla Escolha", "Asserção-Razão", "Discursivo"])
-        perfil     = st.text_input("Perfil do egresso", "")
-        competencia= st.text_input("Competência", "")
-        objeto     = st.text_input("Objeto de conhecimento", "")
-        dificuldade= st.select_slider("Dificuldade", ["Fácil", "Média", "Difícil"])
-        info_add   = st.text_area("Observações (opcional)", "")
-        submit     = st.form_submit_button("🚀 Gerar Questão")
+        fonte       = st.text_input("Fonte/Veículo", "")
+        ano         = st.text_input("Ano", "")
+        tipo_item   = st.selectbox("Tipo de item", ["Múltipla Escolha", "Asserção-Razão", "Discursivo"])
+        perfil      = st.text_input("Perfil do egresso", "")
+        competencia = st.text_input("Competência", "")
+        objeto      = st.text_input("Objeto de conhecimento", "")
+        dificuldade = st.select_slider("Dificuldade", ["Fácil", "Média", "Difícil"], value="Média")
+        extra       = st.text_area("Observações (opcional)", "")
+        submit      = st.form_submit_button("🚀 Gerar Questão")
     if submit:
-        if not (fonte and ano and contexto):
-            st.error("Preencha Fonte, Ano e Contexto.")
+        if not (fonte and ano):
+            st.error("Preencha 'Fonte/Veículo' e 'Ano'.")
         else:
-            # referência ABNT simplificado
             hoje = datetime.now()
             meses = ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.",
                      "jul.", "ago.", "set.", "out.", "nov.", "dez."]
-            data_acesso = f"{hoje.day} {meses[hoje.month-1]} {hoje.year}"
+            acesso = f"{hoje.day} {meses[hoje.month-1]} {hoje.year}"
             referencia = (
                 f"Fonte: {fonte}, {ano}. Disponível em: "
-                f"{st.session_state.fonte_info['link']}. Acesso em: {data_acesso}."
+                f"{st.session_state.fonte_info['link']}. Acesso em: {acesso}."
             )
-            # montar prompt
             prompt = f"""
 **Contexto (situação-problema):**
-{contexto}
+{st.session_state.contexto}
 
 **Texto-Base:**
 {st.session_state.trecho_para_prompt}
@@ -224,11 +231,10 @@ if st.session_state.trecho_para_prompt:
 - Competência: {competencia}
 - Objeto de conhecimento: {objeto}
 - Dificuldade: {dificuldade}
-- Observações: {info_add}
+- Observações: {extra}
 """
             raw = gerar_questao_llm(prompt, api_key, modelo)
             st.session_state.questao_bruta = raw
-            # validação JSON
             try:
                 q = json.loads(raw)
                 campos = {"contexto","texto_base","referencia","enunciado","alternativas","gabarito","justificativas"}
@@ -240,9 +246,9 @@ if st.session_state.trecho_para_prompt:
             except Exception as e:
                 st.error(f"Resposta não é JSON válido: {e}")
 
-# --- ETAPA 4: EXIBIÇÃO ---
+# --- EXIBIÇÃO DA QUESTÃO ---
 if st.session_state.questao:
-    st.header("4. Questão ENADE Estruturada")
+    st.header("Questão ENADE Estruturada")
     q = st.session_state.questao
     st.markdown(f"**Contexto:** {q['contexto']}")
     st.markdown(f"**Texto-Base:** {q['texto_base']}")
@@ -256,10 +262,10 @@ if st.session_state.questao:
     for letra, jus in q["justificativas"].items():
         st.markdown(f"- **{letra}**: {jus}")
     st.download_button(
-        "📥 Baixar (.txt)",
+        "📥 Baixar (.json)",
         data=json.dumps(q, ensure_ascii=False, indent=2),
         file_name=f"questao_{curso.replace(' ','_')}.json",
         mime="application/json"
     )
 else:
-    st.info("Complete todas as etapas para gerar a questão.")
+    st.info("Siga os passos acima para gerar sua questão ENADE.")
