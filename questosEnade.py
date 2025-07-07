@@ -17,9 +17,9 @@ st.set_page_config(
 )
 
 # Inicializa estados de sessão
-for key in ("texto_fonte", "trecho_para_prompt", "questao_gerada"):
+for key in ("texto_fonte", "trecho_para_prompt", "questao_gerada", "last_pdf"):
     if key not in st.session_state:
-        st.session_state[key] = ""
+        st.session_state[key] = "" if key != "last_pdf" else None
 if "fonte_info" not in st.session_state:
     st.session_state.fonte_info = {"link": ""}
 
@@ -101,7 +101,7 @@ def gerar_questao(prompt: str, provedor: str, api_key: str, modelo: str) -> str 
             )
             return r.choices[0].message.content
 
-        else:  # Gemini
+        else:
             genai.configure(api_key=api_key)
             gm = genai.GenerativeModel(modelo)
             full = f"Como especialista ENADE, siga estas regras:\n{REQUISITOS_ENADE}\n\n{prompt}"
@@ -120,12 +120,12 @@ with st.sidebar:
         "- **Google Gemini**: Google Cloud Console → Generative AI → API Keys\n"
     )
     provedor = st.selectbox("Provedor de IA", ["ChatGPT (OpenAI)", "Gemini (Google)"])
-    default = (
+    default_key = (
         st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
         if provedor.startswith("ChatGPT")
         else st.secrets.get("GOOGLE_API_KEY") or os.getenv("GOOGLE_API_KEY")
     )
-    api_key = st.text_input("Chave de API", default or "", type="password")
+    api_key = st.text_input("Chave de API", default_key or "", type="password")
     modelo = st.selectbox(
         "Modelo",
         ["gpt-4o-mini", "gpt-3.5-turbo"] if provedor.startswith("ChatGPT")
@@ -144,19 +144,24 @@ assunto = st.text_input("Tópico/Assunto central", "")
 # --- ETAPA 2: TEXTO-BASE ---
 st.header("2. Texto-Base (Situação-Estímulo)")
 metodo = st.radio("Fonte do texto-base:", ["Copiar link (URL)", "Fazer upload de PDF"])
+
 if metodo == "Copiar link (URL)":
     url = st.text_input("Cole a URL aqui:")
     if st.button("Extrair da URL"):
-        st.session_state.texto_fonte = extrair_texto_url(url)
-        st.session_state.fonte_info["link"] = url
-        st.experimental_rerun()
-else:
+        txt = extrair_texto_url(url)
+        if txt:
+            st.session_state.texto_fonte = txt
+            st.session_state.fonte_info["link"] = url
+elif metodo == "Fazer upload de PDF":
     upload_pdf = st.file_uploader("Envie o PDF", type=["pdf"])
-    if upload_pdf:
-        st.session_state.texto_fonte = extrair_texto_pdf(upload_pdf)
-        st.session_state.fonte_info["link"] = upload_pdf.name
-        st.experimental_rerun()
+    if upload_pdf and st.session_state.last_pdf != upload_pdf:
+        txt = extrair_texto_pdf(upload_pdf)
+        if txt:
+            st.session_state.texto_fonte = txt
+            st.session_state.fonte_info["link"] = upload_pdf.name
+            st.session_state.last_pdf = upload_pdf
 
+# Exibe o texto-base se disponível
 if st.session_state.texto_fonte:
     st.success("Texto-base carregado!")
     with st.expander("Ver texto extraído"):
@@ -176,11 +181,7 @@ if st.session_state.texto_fonte:
             options=paras,
             format_func=lambda x: textwrap.shorten(x, 100, placeholder="...")
         )
-        if sel:
-            st.session_state.trecho_para_prompt = "\n\n".join(sel)
-        else:
-            st.warning("Nenhum parágrafo longo encontrado; usará todo o texto.")
-            st.session_state.trecho_para_prompt = st.session_state.texto_fonte
+        st.session_state.trecho_para_prompt = "\n\n".join(sel) if sel else st.session_state.texto_fonte
     else:
         st.info("A IA criará um novo texto-base a partir do documento inteiro.")
         st.session_state.trecho_para_prompt = st.session_state.texto_fonte
