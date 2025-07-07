@@ -100,7 +100,7 @@ def gerar_questao_com_llm(prompt, modelo, api_key):
         if modelo == "ChatGPT (OpenAI)":
             client = OpenAI(api_key=api_key)
             completion = client.chat.completions.create(
-                model="gpt-4o",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": f"Você é um docente especialista do INEP e deve criar uma questão para o ENADE. Siga RIGOROSAMENTE as seguintes regras oficiais: {REQUISITOS_OBRIGATORIOS_ENADE}"},
                     {"role": "user", "content": prompt}
@@ -112,7 +112,7 @@ def gerar_questao_com_llm(prompt, modelo, api_key):
 
         elif modelo == "Gemini (Google)":
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-pro-latest')
+            model = genai.GenerativeModel('Gemini 1.5 Flash')
             full_prompt = f"Como um docente especialista do INEP, sua tarefa é criar uma questão para o ENADE. Siga obrigatoriamente as regras abaixo:\n\n{REQUISITOS_OBRIGATORIOS_ENADE}\n\nAgora, com base na encomenda a seguir, gere a questão:\n\n{prompt}"
             response = model.generate_content(full_prompt)
             return response.text
