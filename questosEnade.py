@@ -7,6 +7,7 @@ from io import BytesIO
 from bs4 import BeautifulSoup
 from openai import OpenAI
 import PyPDF2
+from docx import Document
 
 # --- Taxonomia de Bloom ---
 BLOOM_LEVELS = ["Lembrar", "Compreender", "Aplicar", "Analisar", "Avaliar", "Criar"]
@@ -23,7 +24,7 @@ BLOOM_VERBS = {
 st.set_page_config(page_title="Gerador de Questões ENADE", page_icon="🎓", layout="wide")
 st.sidebar.header("🔑 Configuração da API")
 api_key = st.sidebar.text_input("Chave OpenAI", type="password")
-model    = st.sidebar.selectbox("Modelo GPT", ["gpt-4o-mini", "gpt-3.5-turbo"])
+model   = st.sidebar.selectbox("Modelo GPT", ["gpt-4o-mini", "gpt-3.5-turbo"])
 if not api_key:
     st.sidebar.warning("Informe sua chave da OpenAI para continuar.")
     st.stop()
@@ -50,11 +51,11 @@ def extrair_texto_pdf(upload) -> str | None:
         st.error(f"Erro ao ler PDF: {e}")
         return None
 
-def chamar_llm(prompts, temperature=0.7, max_tokens=300):
+def chamar_llm(messages, temperature=0.7, max_tokens=300):
     client = OpenAI(api_key=api_key)
     resp = client.chat.completions.create(
         model=model,
-        messages=prompts,
+        messages=messages,
         temperature=temperature,
         max_tokens=max_tokens
     )
@@ -73,7 +74,7 @@ if metodo=="URL":
     url = st.text_input("Cole a URL completa")
     if st.button("▶️ Extrair de URL"):
         txt = extrair_texto_url(url)
-        if txt: 
+        if txt:
             st.session_state.full_text = txt
             st.session_state.link      = url
 elif metodo=="PDF":
@@ -85,7 +86,6 @@ elif metodo=="PDF":
             st.session_state.link      = pdf.name
 
 if st.session_state.get("full_text"):
-    st.success("Texto-base carregado!")
     with st.expander("Ver / editar texto-base completo"):
         st.session_state.full_text = st.text_area(
             "Texto completo", st.session_state.full_text, height=300
@@ -94,14 +94,13 @@ if st.session_state.get("full_text"):
 # --- 4. GERAR TEXTO-BASE pelo LLM ---
 st.header("3. Texto-Base (selecionado pela IA)")
 if st.session_state.get("full_text") and not st.session_state.get("text_base"):
-    prompt = [
+    messages = [
         {"role":"system","content":"Você é um assistente que seleciona trechos para questões ENADE."},
         {"role":"user","content":
-            "Escolha um trecho de 100–200 palavras do texto abaixo "
-            "para servir de TEXTO-BASE em uma questão ENADE:\n\n"
+            "Escolha um trecho de 100–200 palavras deste texto para servir de TEXTO-BASE em uma questão ENADE:\n\n"
             + st.session_state.full_text}
     ]
-    tb = chamar_llm(prompt, temperature=0.5, max_tokens=200)
+    tb = chamar_llm(messages, temperature=0.5, max_tokens=200)
     st.session_state.text_base = tb
 
 if st.session_state.get("text_base"):
@@ -111,7 +110,7 @@ if st.session_state.get("text_base"):
         height=150
     )
 
-# --- 5. QUESTION PARAMETERS & Bloom ---
+# --- 5. PARÂMETROS & BLOOM ---
 st.header("4. Parâmetros da Questão")
 with st.form("params_form"):
     perfil      = st.text_input("Perfil do egresso")
@@ -121,14 +120,13 @@ with st.form("params_form"):
     extra       = st.text_area("Observações adicionais (opcional)")
 
     st.subheader("Taxonomia de Bloom")
-    modo_b = st.radio("Verbos de Bloom por:", ["Faixa de níveis","Nível único"], horizontal=True)
+    modo_b     = st.radio("Verbos de Bloom por:", ["Faixa de níveis","Nível único"], horizontal=True)
     if modo_b=="Faixa de níveis":
-        faixa = st.select_slider("Faixa:", options=BLOOM_LEVELS,
-                                 value=(BLOOM_LEVELS[0], BLOOM_LEVELS[-1]))
+        faixa = st.select_slider("Faixa:", options=BLOOM_LEVELS, value=(BLOOM_LEVELS[0], BLOOM_LEVELS[-1]))
         i0,i1 = BLOOM_LEVELS.index(faixa[0]), BLOOM_LEVELS.index(faixa[1])
         verbs = [v for lvl in BLOOM_LEVELS[i0:i1+1] for v in BLOOM_VERBS[lvl]]
     else:
-        lvl = st.selectbox("Nível:", BLOOM_LEVELS)
+        lvl   = st.selectbox("Nível:", BLOOM_LEVELS)
         verbs = BLOOM_VERBS[lvl]
     selected_verbs = st.multiselect("Selecione verbos:", verbs)
 
@@ -140,7 +138,7 @@ if gerar_params:
 # --- 6. GERAR CONTEXTUALIZAÇÃO pelo LLM ---
 st.header("5. Contextualização (gerada pela IA)")
 if st.session_state.get("text_base") and gerar_params and not st.session_state.get("context"):
-    prompt = [
+    messages = [
         {"role":"system","content":"Você elabora contextos para questões ENADE."},
         {"role":"user","content":
             f"Com base neste TEXTO-BASE e nos parâmetros:\n"
@@ -148,9 +146,10 @@ if st.session_state.get("text_base") and gerar_params and not st.session_state.g
             f"Dificuldade: {dificuldade}\nVerbos de Bloom: {', '.join(selected_verbs)}\n"
             f"Observações: {extra}\n\n"
             f"TEXTO-BASE:\n{st.session_state.text_base}\n\n"
-            "Gere uma breve contextualização (situação-problema)."}
+            "Gere uma breve contextualização (situação-problema)."
+        }
     ]
-    ctx = chamar_llm(prompt, temperature=0.7, max_tokens=200)
+    ctx = chamar_llm(messages, temperature=0.7, max_tokens=200)
     st.session_state.context = ctx
 
 if st.session_state.get("context"):
@@ -203,30 +202,56 @@ Agora, gere o ENUNCIADO da questão, as 5 alternativas (A–E), o gabarito e as 
   "justificativas":{{"A":"", "B":"", "C":"", "D":"", "E":""}}
 }}
 """
-        raw = chamar_llm(
-            [{"role":"system","content":system_prompt},
-             {"role":"user","content":user_prompt}],
-            temperature=0.3, max_tokens=1000
-        )
+        raw = chamar_llm([{"role":"system","content":system_prompt},
+                          {"role":"user","content":user_prompt}],
+                         temperature=0.3, max_tokens=1000)
         try:
             st.session_state.questao = json.loads(raw)
         except:
             st.session_state.questao = raw
 
-# --- 8. RESULTADO & GERAR OUTRA ---
+# --- 8. RESULTADO & DOWNLOAD EM WORD ---
 st.header("7. Resultado")
 q = st.session_state.get("questao")
 if q:
+    # Exibir em tela
     if isinstance(q, dict):
-        st.json(q)
-        st.download_button(
-            "📥 Baixar JSON",
-            data=json.dumps(q, ensure_ascii=False, indent=2),
-            file_name="questao_enade.json"
-        )
+        st.subheader("Enunciado")
+        st.markdown(q["enunciado"])
+        st.subheader("Alternativas")
+        for letra, texto in q["alternativas"].items():
+            st.markdown(f"- **{letra}.** {texto}")
+        st.markdown(f"**Gabarito:** {q['gabarito']}")
+        st.subheader("Justificativas")
+        for letra, jus in q["justificativas"].items():
+            st.markdown(f"- **{letra}.** {jus}")
     else:
         st.markdown(q)
-    if st.button("🔄 Gerar outra questão"):
-        for k in ("text_base","context","questao"):
-            st.session_state.pop(k, None)
-        st.experimental_rerun()
+
+    # Gerar e baixar documento Word
+    doc = Document()
+    doc.add_heading("Questão ENADE", level=1)
+    doc.add_paragraph("Texto-Base:")
+    doc.add_paragraph(st.session_state.text_base)
+    doc.add_paragraph("Contextualização:")
+    doc.add_paragraph(st.session_state.context)
+    if isinstance(q, dict):
+        doc.add_paragraph("Enunciado:")
+        doc.add_paragraph(q["enunciado"])
+        doc.add_paragraph("Alternativas:")
+        for letra, texto in q["alternativas"].items():
+            doc.add_paragraph(f"{letra}. {texto}")
+        doc.add_paragraph(f"Gabarito: {q['gabarito']}")
+        doc.add_paragraph("Justificativas:")
+        for letra, jus in q["justificativas"].items():
+            doc.add_paragraph(f"{letra}. {jus}")
+
+    buffer = BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    st.download_button(
+        "📥 Baixar em Word (.docx)",
+        data=buffer,
+        file_name="questao_enade.docx",
+        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
