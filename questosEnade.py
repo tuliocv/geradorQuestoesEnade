@@ -110,30 +110,55 @@ if st.session_state.get("text_base"):
         height=150
     )
 
-# --- 5. PARÂMETROS & BLOOM ---
-st.header("4. Parâmetros da Questão")
-with st.form("params_form"):
-    perfil      = st.text_input("Perfil do egresso")
-    competencia = st.text_input("Competência")
-    objeto      = st.text_input("Objeto de conhecimento")
-    dificuldade = st.select_slider("Nível de dificuldade", ["Fácil","Média","Difícil"], value="Média")
-    extra       = st.text_area("Observações adicionais (opcional)")
+# --- 5. REFERÊNCIA ABNT (pré-preenchida e editável) ---
+st.header("5. Referência ABNT")
+# quatro colunas para os quatro elementos da referência
+col1, col2, col3, col4 = st.columns(4)
+autor_ref     = col1.text_input(
+    "Autor (SOBRENOME, Nome)",
+    value=st.session_state.get("autor_ref", "")
+)
+titulo_ref    = col2.text_input(
+    "Título do texto-base",
+    value=st.session_state.get("titulo_ref", "")
+)
+veiculo_ref   = col3.text_input(
+    "Veículo (site, jornal, revista etc.)",
+    value=st.session_state.get("veiculo_ref", "")
+)
+data_pub_ref  = col4.text_input(
+    "Data de publicação (dd mmm. aaaa)",
+    value=st.session_state.get("data_pub_ref", "")
+)
 
-    st.subheader("Taxonomia de Bloom")
-    modo_b     = st.radio("Verbos de Bloom por:", ["Faixa de níveis","Nível único"], horizontal=True)
-    if modo_b=="Faixa de níveis":
-        faixa = st.select_slider("Faixa:", options=BLOOM_LEVELS, value=(BLOOM_LEVELS[0], BLOOM_LEVELS[-1]))
-        i0,i1 = BLOOM_LEVELS.index(faixa[0]), BLOOM_LEVELS.index(faixa[1])
-        verbs = [v for lvl in BLOOM_LEVELS[i0:i1+1] for v in BLOOM_VERBS[lvl]]
-    else:
-        lvl   = st.selectbox("Nível:", BLOOM_LEVELS)
-        verbs = BLOOM_VERBS[lvl]
-    selected_verbs = st.multiselect("Selecione verbos:", verbs)
+# salva no estado para que continue disponível em reruns
+st.session_state["autor_ref"]    = autor_ref
+st.session_state["titulo_ref"]   = titulo_ref
+st.session_state["veiculo_ref"]  = veiculo_ref
+st.session_state["data_pub_ref"] = data_pub_ref
 
-    gerar_params = st.form_submit_button("▶️ Confirmar Parâmetros")
-
-if gerar_params:
-    st.success("Parâmetros definidos.")
+# só monta a referência quando todos os campos estiverem preenchidos
+if autor_ref and titulo_ref and veiculo_ref and data_pub_ref:
+    hoje = datetime.now()
+    meses_abnt = [
+        "jan.", "fev.", "mar.", "abr.",
+        "mai.", "jun.", "jul.", "ago.",
+        "set.", "out.", "nov.", "dez."
+    ]
+    acesso = f"{hoje.day} {meses_abnt[hoje.month-1]} {hoje.year}"
+    referencia_abnt = (
+        f"{autor_ref}. {titulo_ref}. {veiculo_ref}, {data_pub_ref}. "
+        f"Disponível em: <{st.session_state.link}>. Acesso em: {acesso}."
+    )
+    # salva no estado e exibe para edição final se necessário
+    st.session_state["referencia"] = referencia_abnt
+    st.text_area(
+        "Referência ABNT (edite se quiser):",
+        value=referencia_abnt,
+        height=100
+    )
+else:
+    st.info("Preencha Autor, Título, Veículo e Data para gerar a referência ABNT.")
 
 # --- 6. GERAR CONTEXTUALIZAÇÃO pelo LLM ---
 st.header("5. Contextualização (gerada pela IA)")
