@@ -20,7 +20,7 @@ BLOOM_VERBS = {
     "Criar":        ["projetar", "construir", "formular", "sintetizar", "planejar"]
 }
 
-# --- 1. Configuração da página & API ---
+# --- 1. Configuração da página & API Key ---
 st.set_page_config(page_title="Gerador de Questões ENADE", page_icon="🎓", layout="wide")
 st.sidebar.header("🔑 OpenAI API Key")
 api_key = st.sidebar.text_input("", type="password")
@@ -28,6 +28,10 @@ model   = st.sidebar.selectbox("Modelo GPT", ["gpt-4o-mini", "gpt-3.5-turbo"])
 if not api_key:
     st.sidebar.warning("Informe sua chave da OpenAI para continuar.")
     st.stop()
+
+# --- Inicializa flags em session_state ---
+if "params_confirmed" not in st.session_state:
+    st.session_state["params_confirmed"] = False
 
 # --- Funções auxiliares ---
 @st.cache_data(ttl=3600)
@@ -51,7 +55,7 @@ def extrair_texto_pdf(upload) -> str | None:
         st.error(f"Erro ao ler PDF: {e}")
         return None
 
-def chamar_llm(messages, temperature=0.7, max_tokens=300):
+def chamar_llm(messages, temperature=0.7, max_tokens=300) -> str:
     client = OpenAI(api_key=api_key)
     resp = client.chat.completions.create(
         model=model,
@@ -61,18 +65,18 @@ def chamar_llm(messages, temperature=0.7, max_tokens=300):
     )
     return resp.choices[0].message.content.strip()
 
-# --- 2. Escopo da questão ---
+# --- 2. Escopo da Questão ---
 st.header("1. Definição do Escopo")
 area    = st.text_input("Área do conhecimento", placeholder="Ex: Engenharias")
 curso   = st.text_input("Curso",               placeholder="Ex: Engenharia de Software")
-assunto = st.text_input("Tópico/Assunto central", placeholder="Ex: IA na arbitragem")
+assunto = st.text_input("Tópico / Assunto central", placeholder="Ex: IA na arbitragem")
 
-# --- 3. Carregar texto-base ---
+# --- 3. Carregar Texto-Base ---
 st.header("2. Carregue o Texto-Base")
 metodo = st.radio("Origem do texto-base:", ["URL", "PDF"], horizontal=True)
 if metodo == "URL":
     url = st.text_input("Cole a URL completa")
-    if st.button("▶️ Extrair texto da URL"):
+    if st.button("▶️ Extrair de URL"):
         txt = extrair_texto_url(url)
         if txt:
             st.session_state.full_text = txt
@@ -91,14 +95,22 @@ if st.session_state.get("full_text"):
             "Texto completo", st.session_state.full_text, height=300
         )
 
-# --- 4. Texto-Base selecionado pela IA ou pelo usuário ---
+# --- 4. Definir o Texto-Base ---
 st.header("3. Defina o Texto-Base")
 if st.session_state.get("full_text"):
-    modo_tb = st.radio("Como obter o trecho-base?", ["Selecionar manualmente", "Resumo automático"], horizontal=True)
+    modo_tb = st.radio(
+        "Como obter o trecho-base?",
+        ["Selecionar manualmente", "Resumo automático"],
+        horizontal=True
+    )
     if modo_tb == "Selecionar manualmente":
-        paras = [p.strip() for p in st.session_state.full_text.split("\n") if len(p.strip())>80]
+        paras = [
+            p.strip() for p in st.session_state.full_text.split("\n")
+            if len(p.strip()) > 80
+        ]
         sel = st.multiselect(
-            "Escolha parágrafo(s):", paras,
+            "Escolha parágrafo(s):",
+            paras,
             format_func=lambda p: textwrap.shorten(p, 120, placeholder="…")
         )
         if sel:
@@ -106,7 +118,7 @@ if st.session_state.get("full_text"):
     else:
         if st.button("🔎 Gerar resumo automático"):
             prompt = [
-                {"role":"system","content":"Você é um assistente que gera resumos concisos para questões ENADE."},
+                {"role":"system","content":"Você cria resumos concisos para questões ENADE."},
                 {"role":"user","content":
                     "Resuma em até 3 frases este texto para servir de base a uma situação-problema ENADE:\n\n"
                     + st.session_state.full_text}
@@ -115,25 +127,40 @@ if st.session_state.get("full_text"):
     if st.session_state.get("text_base"):
         st.session_state.text_base = st.text_area(
             "Texto-Base (edite se desejar):",
-            value=st.session_state.text_base, height=150
+            value=st.session_state.text_base,
+            height=150
         )
 
-# --- 5. Referência ABNT pré-preenchida e editável ---
+# --- 5. Referência ABNT (pré-preenchida e editável) ---
 st.header("4. Referência ABNT")
 col1, col2, col3, col4 = st.columns(4)
-autor_ref    = col1.text_input("Autor (SOBRENOME, Nome)", value=st.session_state.get("autor_ref",""))
-titulo_ref   = col2.text_input("Título do texto-base", value=st.session_state.get("titulo_ref",""))
-veiculo_ref  = col3.text_input("Veículo (site, jornal, revista)", value=st.session_state.get("veiculo_ref",""))
-data_pub_ref = col4.text_input("Data de publicação (dd mmm. aaaa)", value=st.session_state.get("data_pub_ref",""))
-
+autor_ref    = col1.text_input(
+    "Autor (SOBRENOME, Nome)", value=st.session_state.get("autor_ref","")
+)
+titulo_ref   = col2.text_input(
+    "Título do texto-base", value=st.session_state.get("titulo_ref","")
+)
+veiculo_ref  = col3.text_input(
+    "Veículo (site, jornal, revista)", value=st.session_state.get("veiculo_ref","")
+)
+data_pub_ref = col4.text_input(
+    "Data de publicação (dd mmm. aaaa)", value=st.session_state.get("data_pub_ref","")
+)
 st.session_state["autor_ref"]    = autor_ref
 st.session_state["titulo_ref"]   = titulo_ref
 st.session_state["veiculo_ref"]  = veiculo_ref
 st.session_state["data_pub_ref"] = data_pub_ref
 
-if autor_ref and titulo_ref and veiculo_ref and data_pub_ref and st.session_state.get("link"):
+if (
+    autor_ref and titulo_ref and veiculo_ref and data_pub_ref
+    and st.session_state.get("link")
+):
     hoje = datetime.now()
-    meses_abnt = ["jan.","fev.","mar.","abr.","mai.","jun.","jul.","ago.","set.","out.","nov.","dez."]
+    meses_abnt = [
+        "jan.", "fev.", "mar.", "abr.",
+        "mai.", "jun.", "jul.", "ago.",
+        "set.", "out.", "nov.", "dez."
+    ]
     acesso = f"{hoje.day} {meses_abnt[hoje.month-1]} {hoje.year}"
     referencia_abnt = (
         f"{autor_ref}. {titulo_ref}. {veiculo_ref}, {data_pub_ref}. "
@@ -141,28 +168,33 @@ if autor_ref and titulo_ref and veiculo_ref and data_pub_ref and st.session_stat
     )
     st.session_state["referencia"] = referencia_abnt
     st.session_state["referencia"] = st.text_area(
-        "Referência ABNT (edite se quiser):", referencia_abnt, height=100
+        "Referência ABNT (edite se quiser):",
+        value=referencia_abnt,
+        height=100
     )
 else:
     st.info("Preencha Autor, Título, Veículo e Data para gerar referência ABNT.")
 
 # --- 6. Parâmetros ENADE & Bloom ---
 st.header("5. Parâmetros da Questão")
-if "params_confirmed" not in st.session_state:
-    st.session_state["params_confirmed"] = False
-
 with st.form("params_form"):
     perfil      = st.text_input("Perfil do egresso")
     competencia = st.text_input("Competência")
     objeto      = st.text_input("Objeto de conhecimento")
-    dificuldade = st.select_slider("Nível de dificuldade", ["Fácil","Média","Difícil"], value="Média")
+    dificuldade = st.select_slider(
+        "Nível de dificuldade", ["Fácil","Média","Difícil"], value="Média"
+    )
     extra       = st.text_area("Observações adicionais (opcional)")
 
     st.subheader("Taxonomia de Bloom")
-    modo_b = st.radio("Verbos de Bloom por:", ["Faixa de níveis","Nível único"], horizontal=True)
+    modo_b = st.radio(
+        "Verbos de Bloom por:", ["Faixa de níveis","Nível único"], horizontal=True
+    )
     if modo_b == "Faixa de níveis":
-        faixa = st.select_slider("Faixa:", options=BLOOM_LEVELS,
-                                 value=(BLOOM_LEVELS[0], BLOOM_LEVELS[-1]))
+        faixa = st.select_slider(
+            "Faixa:", options=BLOOM_LEVELS,
+            value=(BLOOM_LEVELS[0], BLOOM_LEVELS[-1])
+        )
         i0, i1 = BLOOM_LEVELS.index(faixa[0]), BLOOM_LEVELS.index(faixa[1])
         verbs = [v for lvl in BLOOM_LEVELS[i0:i1+1] for v in BLOOM_VERBS[lvl]]
     else:
@@ -175,7 +207,7 @@ with st.form("params_form"):
         st.session_state["params_confirmed"] = True
         st.success("Parâmetros definidos.")
 
-# --- 7. Geração de Contextualização ---
+# --- 7. Geração de Contextualização (max_tokens=500) ---
 st.header("6. Contextualização (gerada pela IA)")
 if (
     st.session_state.get("text_base")
@@ -196,13 +228,13 @@ if (
             "Gere uma breve contextualização (situação-problema)."
         }
     ]
-    st.session_state.context = chamar_llm(messages, temperature=0.7, max_tokens=200)
+    st.session_state.context = chamar_llm(messages, temperature=0.7, max_tokens=500)
 
 if st.session_state.get("context"):
     st.session_state.context = st.text_area(
         "Contextualização (edite se quiser):",
         value=st.session_state.context,
-        height=120
+        height=180
     )
 
 # --- 8. Geração da Questão ENADE ---
@@ -257,7 +289,7 @@ Retorne em JSON:
         except:
             st.session_state.questao = raw
 
-# --- 9. Exibição e download em Word ---
+# --- 9. Exibição & Download em Word (split paragraphs) ---
 st.header("8. Resultado")
 q = st.session_state.get("questao")
 if q:
@@ -275,23 +307,33 @@ if q:
     else:
         st.markdown(q)
 
-    # Gerar Word
+    # Gerar documento Word com quebras de parágrafo
     doc = Document()
     doc.add_heading("Questão ENADE", level=1)
-    doc.add_paragraph("Texto-Base:")
-    doc.add_paragraph(st.session_state.text_base)
-    doc.add_paragraph("Contextualização:")
-    doc.add_paragraph(st.session_state.context)
+
+    doc.add_heading("Texto-Base:", level=2)
+    for par in st.session_state.text_base.split("\n"):
+        doc.add_paragraph(par)
+
+    doc.add_heading("Contextualização:", level=2)
+    for par in st.session_state.context.split("\n"):
+        doc.add_paragraph(par)
+
     if isinstance(q, dict):
-        doc.add_paragraph("Enunciado:")
+        doc.add_heading("Enunciado:", level=2)
         doc.add_paragraph(q["enunciado"])
-        doc.add_paragraph("Alternativas:")
+
+        doc.add_heading("Alternativas:", level=2)
         for letra, texto in q["alternativas"].items():
-            doc.add_paragraph(f"{letra}. {texto}")
+            for par in texto.split("\n"):
+                doc.add_paragraph(f"{letra}. {par}")
+
         doc.add_paragraph(f"Gabarito: {q['gabarito']}")
-        doc.add_paragraph("Justificativas:")
+
+        doc.add_heading("Justificativas:", level=2)
         for letra, jus in q["justificativas"].items():
-            doc.add_paragraph(f"{letra}. {jus}")
+            for par in jus.split("\n"):
+                doc.add_paragraph(f"{letra}. {par}")
 
     buffer = BytesIO()
     doc.save(buffer)
@@ -304,7 +346,9 @@ if q:
     )
 
     if st.button("🔄 Gerar outra questão"):
-        for k in ("full_text","text_base","autor_ref","titulo_ref","veiculo_ref",
-                  "data_pub_ref","referencia","params_confirmed","context","questao"):
+        for k in [
+            "full_text","text_base","autor_ref","titulo_ref","veiculo_ref",
+            "data_pub_ref","referencia","params_confirmed","context","questao"
+        ]:
             st.session_state.pop(k, None)
         st.experimental_rerun()
