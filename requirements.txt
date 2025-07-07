@@ -1,7 +1,6 @@
-streamlit
-openai
-google-generativeai
-requests
-beautifulsoup4
-PyPDF2
-pandas
+streamlit==1.25.0
+openai==0.28.0
+requests==2.31.0
+beautifulsoup4==4.12.0
+PyPDF2==3.1.0
+python-docx==0.8.12
