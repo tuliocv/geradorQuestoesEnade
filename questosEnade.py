@@ -18,7 +18,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Inicializar o estado da sessão para armazenar dados
+# Estado da sessão
 if 'texto_fonte' not in st.session_state:
     st.session_state.texto_fonte = ""
 if 'fonte_info' not in st.session_state:
@@ -71,15 +71,13 @@ REQUISITOS_OBRIGATORIOS_ENADE = """
 
 @st.cache_data(ttl=3600)
 def extrair_texto_url(url: str) -> str | None:
-    """Extrai o texto principal de uma página web usando requests + BeautifulSoup."""
+    """Extrai texto de uma página web usando requests + BeautifulSoup."""
     try:
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")
-        # Remove scripts, estilos e seções comuns irrelevantes
         for tag in soup(["script", "style", "header", "footer", "nav", "aside"]):
             tag.decompose()
-        # Concatena todo o texto visível
         return " ".join(soup.stripped_strings)
     except Exception as e:
         st.error(f"Falha ao extrair texto da URL: {e}")
@@ -132,9 +130,12 @@ st.markdown("Este app cria questões ENADE seguindo as diretrizes oficiais do IN
 
 # --- SIDEBAR: CONFIGURAÇÃO DE IA ---
 with st.sidebar:
-    st.markdown("## 🔑 Configuração da IA\n**Como obter sua chave de API**\n\n"
-                "- **OpenAI**: platform.openai.com/account/api-keys\n"
-                "- **Google Gemini**: Console Google Cloud → Generative AI → Chaves de API\n")
+    st.markdown(
+        "## 🔑 Configuração da IA\n"
+        "**Como obter sua chave de API**\n\n"
+        "- **OpenAI**: platform.openai.com/account/api-keys\n"
+        "- **Google Gemini**: Console Google Cloud → Generative AI → Chaves de API\n"
+    )
     provedor_ia = st.selectbox("Provedor de IA", ["ChatGPT (OpenAI)", "Gemini (Google)"])
     default_key = (
         st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -144,7 +145,7 @@ with st.sidebar:
     api_key = st.text_input("Chave de API", value=default_key or "", type="password")
     modelo_selecionado = st.selectbox(
         "Modelo",
-        ["gpt-4o", "gpt-3.5-turbo"] if provedor_ia.startswith("ChatGPT") 
+        ["gpt-4o", "gpt-3.5-turbo"] if provedor_ia.startswith("ChatGPT")
         else ["gemini-1.5-pro-latest", "gemini-1.5-flash-latest"]
     )
     if not api_key:
@@ -206,16 +207,15 @@ if st.session_state.texto_fonte:
         st.info("A IA criará um novo Texto-Base a partir de todo o documento.")
         st.session_state.trecho_para_prompt = st.session_state.texto_fonte
 
-    # Dados da encomenda
     with st.form("encomenda"):
         fonte = st.text_input("Fonte/Veículo", placeholder="Ex: G1, Livro X")
-        ano   = st.text_input("Ano de Publicação", placeholder="Ex: 2024")
+        ano = st.text_input("Ano de Publicação", placeholder="Ex: 2024")
         tipo_item = st.selectbox("Tipo de item", ["Múltipla Escolha", "Asserção-Razão", "Discursivo"])
-        perfil    = st.text_input("Perfil do egresso", placeholder="Ex: Ético e reflexivo")
+        perfil = st.text_input("Perfil do egresso", placeholder="Ex: Ético e reflexivo")
         competencia = st.text_input("Competência", placeholder="Ex: Analisar conflitos éticos")
-        objeto    = st.text_input("Objeto de conhecimento", placeholder="Ex: Legislação e ética")
+        objeto = st.text_input("Objeto de conhecimento", placeholder="Ex: Legislação e ética")
         dificuldade = st.select_slider("Dificuldade", ["Fácil", "Média", "Difícil"], value="Média")
-        info_add  = st.text_area("Instrução adicional (opcional)")
+        info_add = st.text_area("Instrução adicional (opcional)")
 
         if st.form_submit_button("🚀 Gerar Questão"):
             if not fonte or not ano or not st.session_state.trecho_para_prompt:
@@ -264,9 +264,8 @@ if st.session_state.texto_fonte:
 3) Cinco alternativas (A-E);
 4) Gabarito no final: "Gabarito: Letra X".
 """
-                modelo_tag = modelo_selecionado.split("-")[0]
                 st.session_state.questao_gerada = gerar_questao_com_llm(
-                    prompt_final, provedor_ia, api_key, modelo_tag
+                    prompt_final, provedor_ia, api_key, modelo_selecionado
                 )
 
 # --- ETAPA 4: RESULTADO ---
