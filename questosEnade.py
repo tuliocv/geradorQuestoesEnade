@@ -38,7 +38,7 @@ BLOOM_VERBS = {
     "Criar": ["projetar", "construir", "formular", "sintetizar", "planejar", "desenvolver"]
 }
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
+# --- CONFIG STREAMLIT ---
 st.set_page_config(
     page_title="Gerador de Questões ENADE v2.1",
     page_icon="🎓",
@@ -54,7 +54,7 @@ with st.sidebar:
         modelo = st.selectbox("Modelo GPT", ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"])
     else:
         modelo = st.selectbox("Modelo Gemini", ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"])
-    st.info("Gere questões ENADE a partir de texto-base ou deixe a IA criar automaticamente.")
+    st.info("Gere questões ENADE a partir de texto-base ou deixe a IA gerar automaticamente.")
 
 if not st.session_state.get("api_key"):
     st.warning("Informe a chave de API na lateral para continuar.")
@@ -156,7 +156,7 @@ with st.container():
                 prompts = [
                     {"role": "system", "content": "Você gera textos-base concisos para ENADE."},
                     {"role": "user", "content":
-                        f"Gere ~3 frases para situação-problema ENADE em "
+                        f"Gere ~5 frases de alto nível para situação-problema ENADE em "
                         f"Área: {area}, Curso: {curso}, Assunto: {assunto}."
                     }
                 ]
@@ -275,13 +275,20 @@ if st.session_state.text_base and (st.session_state.auto or st.session_state.ref
                 referencia_texto = f"\nREFERÊNCIA:\n{st.session_state.ref_final}\n"
 
             sys_p = """
-Você é docente especialista do INEP. Gere UMA questão ENADE em texto puro, no formato:
+Você é docente especialista do INEP. Ao confeccionar a questão, ela deve:
+- Ser inédita e seguir a encomenda da banca (perfil, competência e conteúdo).
+- Ter texto-base relevante e enunciado claro e afirmativo.
+- Ser proibido solicitar alternativa "incorreta" ou "exceto".
+- Em múltipla escolha: apenas 1 correta e distratores plausíveis.
+- Em discursivos: tarefa complexa (análise, argumentação) e apresentar padrão de resposta detalhado.
+- Utilizar linguagem impessoal (norma-padrão) e citar todas as fontes externas (texte e imagens) no padrão ABNT.
 
-CONTEXTUALIZAÇÃO:
-<…>
+Saída em texto puro, no formato:
 
-ENUNCIADO:
-<…>
+
+<CONTEXTUALIZAÇÃO>
+
+<ENUNCIADO>
 
 ALTERNATIVAS:
 A. …
@@ -306,7 +313,7 @@ Curso: {curso}
 Assunto: {assunto}
 Perfil: {perfil}
 Competência: {comp}
-Verbos: {', '.join(verbs)}
+Verbos de comando: {', '.join(verbs)}
 Observações: {obs}
 
 TEXTO-BASE:
@@ -326,13 +333,13 @@ Por favor, siga EXATAMENTE o formato acima.
 
 # --- 5. Resultados, Download & Nova Questão ---
 if st.session_state.questoes:
+    st.warning("O modelo pode cometer erros. Verifique as respostas antes de usar.")
     st.header("5. Questões Geradas")
     for i, q in enumerate(st.session_state.questoes, 1):
         st.markdown(f"---\n**Questão #{i}**\n```\n{q}\n```")
 
     c1, c2, c3 = st.columns(3)
 
-    # Baixar última
     c1.download_button(
         "📄 Baixar última (.txt)",
         "\n\n".join(st.session_state.questoes[-1:]),
@@ -340,7 +347,6 @@ if st.session_state.questoes:
         "text/plain"
     )
 
-    # Baixar todas
     df_all = pd.DataFrame({"questão": st.session_state.questoes})
     to_xl = BytesIO()
     df_all.to_excel(to_xl, index=False, sheet_name="Questões")
@@ -352,11 +358,9 @@ if st.session_state.questoes:
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-    # Salvar banco e iniciar nova questão
     if c3.button("💾 Salvar banco e Nova Questão"):
         df_all.to_excel("banco_questoes.xlsx", index=False, sheet_name="Questões")
         st.success("Banco salvo em banco_questoes.xlsx")
-        # Resetar estado
         st.session_state.text_base = ""
         st.session_state.auto = False
         st.session_state.ref_final = ""
