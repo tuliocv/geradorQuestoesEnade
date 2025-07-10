@@ -286,7 +286,6 @@ Você é docente especialista do INEP. Ao confeccionar a questão, ela deve:
 
 Saída em texto puro, no formato:
 
-
 <CONTEXTUALIZAÇÃO>
 
 <ENUNCIADO>
@@ -320,7 +319,8 @@ Observações: {obs}
 TEXTO-BASE:
 {st.session_state.text_base}
 {referencia_texto}
-Por favor, siga EXATAMENTE o formato acima.
+Por favor, siga EXATAMENTE o formato acima e não altere o texto-base. Uso o texto-base na forma originnal. 
+Não incluir as palavras NA SAÍDA: CONTEXTUALIZAÇÃO, ENUNCIADO e TEXTO-BASE.
 """
             out = chamar_llm(
                 [{"role": "system", "content": sys_p},
