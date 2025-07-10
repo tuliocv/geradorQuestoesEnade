@@ -27,7 +27,7 @@ BLOOM_VERBS = {
 }
 
 # --- CONFIG STREAMLIT ---
-st.set_page_config(page_title="Gerador de Questões ENADE v3.2", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="Gerador de Questões ENADE v3.3", page_icon="🎓", layout="wide")
 
 # --- ESTADO INICIAL ---
 st.session_state.setdefault("api_key", None)
@@ -49,7 +49,7 @@ with st.sidebar:
         modelo = st.selectbox("Modelo GPT", ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"])
     else:
         modelo = st.selectbox("Modelo Gemini", ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"])
-    st.info("Versão 3.2: Ajuste no seletor de tipo de questão.")
+    st.info("Versão 3.3: Correção de erro de sintaxe (string não terminada).")
 
     st.header("📜 Histórico da Sessão")
     if not st.session_state.questoes_geradas:
@@ -134,7 +134,7 @@ def chamar_llm(prompts, prov, mdl, temperature=0.7, max_tokens=2000):
         return None
 
 # --- LAYOUT PRINCIPAL ---
-st.title("🎓 Gerador de Questões ENADE v3.2")
+st.title("🎓 Gerador de Questões ENADE v3.3")
 st.markdown("Bem-vindo ao gerador interativo. Siga os passos para criar, analisar e refinar suas questões.")
 
 col_input, col_output = st.columns(2, gap="large")
@@ -149,7 +149,6 @@ with col_input:
         curso = c2.selectbox("Curso", AREAS_ENADE[area])
         assunto = st.text_input("Assunto central", "")
         
-        # --- AJUSTE APLICADO AQUI ---
         tipos_questao = {
             "Múltipla Escolha Tradicional": "Enunciado com 5 alternativas (A, B, C, D, E), sendo apenas uma correta.",
             "Complementação": "Frase com uma ou mais lacunas (___) que devem ser preenchidas por uma das alternativas.",
@@ -159,7 +158,7 @@ with col_input:
         question_type = st.selectbox(
             "Tipo de questão", 
             options=list(tipos_questao.keys()),
-            format_func=lambda k: f"{k}: {tipos_questao[k]}" # Formatação para exibir a descrição
+            format_func=lambda k: f"{k}: {tipos_questao[k]}"
         )
 
     with st.container(border=True):
@@ -253,11 +252,35 @@ with col_input:
                     st.error("É necessário ter um Texto-Base para gerar a questão.")
                 else:
                     with st.spinner("Gerando questão e análise de qualidade..."):
-                        sys_p_geracao = "Você é um docente especialista em produzir questões no estilo ENADE..."
-                        usr_p_geracao = f"GERAR QUESTÃO ENADE:\n- Área: {area}, Curso: {curso}, Assunto: {assunto}\n- Perfil: {st.session_state.perfil}, Competência: {st.session_state.competencia}\n- Tipo: {question_type}, Dificuldade: {dificuldade}/5, Nível Bloom: {niv}\n- TEXTO-BASE: {st.session_state.text_base}\n- REFERÊNCIA: {st.session_state.ref_final}\n- FORMATO DE SAÍDA: ENUNCIADO: ..., ALTERNATIVAS: A..., B..., GABARITO:..., JUSTIFICATIVAS:..."
+                        sys_p_geracao = """
+                        Você é um docente especialista em produzir questões no estilo ENADE. Siga as regras:
+                        - A questão deve ser inédita e alinhada à encomenda.
+                        - O enunciado deve ser claro e afirmativo. Proibido pedir a 'incorreta'.
+                        - Para múltipla escolha, crie 4 distratores plausíveis.
+                        """
+                        usr_p_geracao = f"""
+                        GERAR QUESTÃO ENADE:
+                        - Área: {area}, Curso: {curso}, Assunto: {assunto}
+                        - Perfil: {st.session_state.perfil}, Competência: {st.session_state.competencia}
+                        - Tipo: {question_type}, Dificuldade: {dificuldade}/5, Nível Bloom: {niv}
+                        - TEXTO-BASE: {st.session_state.text_base}
+                        - REFERÊNCIA: {st.session_state.ref_final}
+                        - FORMATO DE SAÍDA: ENUNCIADO: ..., ALTERNATIVAS: A..., B..., GABARITO:..., JUSTIFICATIVAS:...
+                        """
                         questao_gerada = chamar_llm([{"role": "system", "content": sys_p_geracao}, {"role": "user", "content": usr_p_geracao}], provedor, modelo)
 
-                        sys_p_analise = "Você é um avaliador de itens do ENADE... AVALIE OS SEGUINTES PONTOS: Clareza e Pertinência; Qualidade dos Distratores; Alinhamento Pedagógico; Potencial de Melhoria."
+                        # --- AJUSTE APLICADO AQUI ---
+                        # A string agora usa aspas triplas (""") para permitir múltiplas linhas.
+                        sys_p_analise = """
+                        Você é um avaliador de itens do ENADE, um especialista em pedagogia e avaliação. 
+                        Sua tarefa é fornecer uma análise crítica e construtiva da questão fornecida.
+                        Seja direto e objetivo. Use bullet points.
+                        AVALIE OS SEGUINTES PONTOS:
+                        - **Clareza e Pertinência:** O enunciado é claro? Ele se conecta bem ao texto-base?
+                        - **Qualidade dos Distratores:** As alternativas incorretas (distratores) são plausíveis? Elas testam erros conceituais comuns ou são fáceis demais?
+                        - **Alinhamento Pedagógico:** A questão realmente avalia a competência, o nível de dificuldade e o nível de Bloom solicitados?
+                        - **Potencial de Melhoria:** Dê uma sugestão para melhorar a questão.
+                        """
                         analise_qualidade = chamar_llm([{"role": "system", "content": sys_p_analise}, {"role": "user", "content": questao_gerada}], provedor, modelo, temperature=0.3)
 
                         if questao_gerada and analise_qualidade:
@@ -265,4 +288,60 @@ with col_input:
                                 "titulo": f"Q{len(st.session_state.questoes_geradas) + 1}: {curso} - {assunto[:25]}...",
                                 "texto_completo": questao_gerada,
                                 "analise_qualidade": analise_qualidade,
-                                "contexto": {"area": area, "curso": curso, "assunto": assunto, "per
+                                "contexto": {"area": area, "curso": curso, "assunto": assunto, "perfil": st.session_state.perfil, "competencia": st.session_state.competencia, "texto_base": st.session_state.text_base}
+                            }
+                            st.session_state.questoes_geradas.append(novo_item)
+                            st.session_state.selected_index = len(st.session_state.questoes_geradas) - 1
+                            st.success("Questão e análise geradas!")
+                            st.rerun()
+
+with col_output:
+    st.header("2. Análise e Refinamento")
+
+    if not st.session_state.questoes_geradas:
+        st.info("A questão gerada, junto com sua análise de qualidade e opções de refinamento, aparecerá aqui.")
+    else:
+        q_selecionada = st.session_state.questoes_geradas[st.session_state.selected_index]
+        st.subheader(f"Visualizando: {q_selecionada['titulo']}")
+        tab_view, tab_analise, tab_refino = st.tabs(["📝 Questão", "🔍 Análise de Qualidade (IA)", "✨ Refinamento Iterativo (IA)"])
+
+        with tab_view:
+            st.text_area("Texto da Questão", value=q_selecionada["texto_completo"], height=500, key=f"q_view_{st.session_state.selected_index}")
+            c1, c2 = st.columns(2)
+            c1.download_button("📄 Baixar esta questão (.txt)", q_selecionada["texto_completo"], f"{q_selecionada['titulo']}.txt", use_container_width=True)
+            df_all = pd.DataFrame([{"titulo": q["titulo"], "questao": q["texto_completo"], "analise": q["analise_qualidade"]} for q in st.session_state.questoes_geradas])
+            to_xl = BytesIO()
+            df_all.to_excel(to_xl, index=False, sheet_name="Questões")
+            to_xl.seek(0)
+            c2.download_button("📥 Baixar todas (.xlsx)", to_xl, "banco_completo_enade.xlsx", use_container_width=True)
+        with tab_analise:
+            st.info("Esta análise foi gerada por uma IA especialista para ajudar na validação da questão.")
+            st.markdown(q_selecionada["analise_qualidade"])
+        with tab_refino:
+            st.warning("Ações de refinamento modificarão a questão atual. A versão original será perdida.")
+            r_c1, r_c2, r_c3 = st.columns(3)
+            if r_c1.button("🤔 Tornar Mais Difícil", use_container_width=True, key=f"b_dificil_{st.session_state.selected_index}"):
+                with st.spinner("Refinando para aumentar a dificuldade..."):
+                    prompt_refino = f"Reescreva a questão a seguir para torná-la significativamente mais difícil, mantendo o mesmo gabarito.\n\nQUESTÃO ATUAL:\n{q_selecionada['texto_completo']}"
+                    texto_refinado = chamar_llm([{"role": "user", "content": prompt_refino}], provedor, modelo)
+                    st.session_state.questoes_geradas[st.session_state.selected_index]["texto_completo"] = texto_refinado
+                    st.rerun()
+            if r_c2.button("✍️ Simplificar o Enunciado", use_container_width=True, key=f"b_simplificar_{st.session_state.selected_index}"):
+                with st.spinner("Refinando para simplificar o enunciado..."):
+                     prompt_refino = f"Reescreva apenas o ENUNCIADO da questão a seguir para torná-lo mais claro e direto, sem alterar o gabarito.\n\nQUESTÃO ATUAL:\n{q_selecionada['texto_completo']}"
+                     texto_refinado = chamar_llm([{"role": "user", "content": prompt_refino}], provedor, modelo)
+                     st.session_state.questoes_geradas[st.session_state.selected_index]["texto_completo"] = texto_refinado
+                     st.rerun()
+            if r_c3.button("🔄 Regenerar Alternativas", use_container_width=True, key=f"b_alternativas_{st.session_state.selected_index}"):
+                with st.spinner("Regenerando as alternativas..."):
+                    prompt_refino = f"Mantenha o TEXTO-BASE e o ENUNCIADO da questão a seguir, mas gere um conjunto completamente novo de 5 ALTERNATIVAS, GABARITO e suas respectivas JUSTIFICATIVAS.\n\nQUESTÃO ATUAL:\n{q_selecionada['texto_completo']}"
+                    texto_refinado = chamar_llm([{"role": "user", "content": prompt_refino}], provedor, modelo)
+                    st.session_state.questoes_geradas[st.session_state.selected_index]["texto_completo"] = texto_refinado
+                    st.rerun()
+
+# Botão para limpar a sessão
+if st.sidebar.button("🔴 Encerrar e Limpar Sessão", use_container_width=True):
+    keys_to_clear = list(st.session_state.keys())
+    for key in keys_to_clear:
+        del st.session_state[key]
+    st.rerun()
