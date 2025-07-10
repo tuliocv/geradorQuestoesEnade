@@ -27,7 +27,7 @@ BLOOM_VERBS = {
 }
 
 # --- CONFIG STREAMLIT ---
-st.set_page_config(page_title="Gerador de Questões ENADE v3.3", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="Gerador de Questões ENADE v3.4", page_icon="🎓", layout="wide")
 
 # --- ESTADO INICIAL ---
 st.session_state.setdefault("api_key", None)
@@ -49,7 +49,7 @@ with st.sidebar:
         modelo = st.selectbox("Modelo GPT", ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"])
     else:
         modelo = st.selectbox("Modelo Gemini", ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"])
-    st.info("Versão 3.3: Correção de erro de sintaxe (string não terminada).")
+    st.info("Versão 3.4: Busca de notícias e inclusão do texto-base corrigidas.")
 
     st.header("📜 Histórico da Sessão")
     if not st.session_state.questoes_geradas:
@@ -105,7 +105,8 @@ def search_articles(query, num=5, search_type='web'):
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         results = []
-        for block in soup.select("div.SoaBEf, div.yuRUbf"):
+        # --- SELETORES ATUALIZADOS PARA BUSCA DE NOTÍCIAS ---
+        for block in soup.select("div.mCBkyc, div.WlydOe, div.SoaBEf"):
             a = block.find("a", href=True)
             title_element = block.find("h3") or block.find('div', role='heading')
             if a and title_element:
@@ -134,7 +135,7 @@ def chamar_llm(prompts, prov, mdl, temperature=0.7, max_tokens=2000):
         return None
 
 # --- LAYOUT PRINCIPAL ---
-st.title("🎓 Gerador de Questões ENADE v3.3")
+st.title("🎓 Gerador de Questões ENADE v3.4")
 st.markdown("Bem-vindo ao gerador interativo. Siga os passos para criar, analisar e refinar suas questões.")
 
 col_input, col_output = st.columns(2, gap="large")
@@ -209,13 +210,12 @@ with col_input:
                             st.error("Não foi possível extrair texto do arquivo.")
 
             with tab_busca:
-                c1_search, c2_search = st.columns(2)
-                if c1_search.button("🔍 Buscar artigos", key="search_acad_btn"):
-                    with st.spinner(f"Buscando artigos sobre '{assunto}'..."):
-                        st.session_state.search_results = search_articles(f'"{assunto}" filetype:pdf site:.edu.br OR site:.gov.br', search_type='web')
-                if c2_search.button("📰 Buscar notícias", key="search_news_btn"):
+                # --- BOTÃO DE BUSCA SIMPLIFICADO ---
+                if st.button("📰 Buscar Notícias", use_container_width=True, key="search_news_btn"):
                     with st.spinner(f"Buscando notícias sobre '{assunto}'..."):
                         st.session_state.search_results = search_articles(f'"{assunto}"', search_type='news')
+                        if not st.session_state.search_results:
+                            st.warning("Nenhuma notícia encontrada.")
                 
                 if st.session_state.search_results:
                     opts = [f"{r['title']}" for r in st.session_state.search_results]
@@ -238,7 +238,7 @@ with col_input:
                                 st.success("Conteúdo da web processado!")
                             else:
                                 st.error("Falha ao extrair conteúdo da URL.")
-        st.text_area("Texto-Base a ser utilizado (gerado ou fornecido):", st.session_state.text_base, height=150, key="tb_final_view")
+        st.text_area("Texto-Base a ser utilizado:", st.session_state.text_base, height=150, key="tb_final_view", disabled=True)
     
     with st.container(border=True):
         st.subheader("Parâmetros de Geração")
@@ -252,48 +252,73 @@ with col_input:
                     st.error("É necessário ter um Texto-Base para gerar a questão.")
                 else:
                     with st.spinner("Gerando questão e análise de qualidade..."):
+                        # --- PROMPT AJUSTADO PARA NÃO REPETIR O TEXTO-BASE ---
                         sys_p_geracao = """
-                        Você é um docente especialista em produzir questões no estilo ENADE. Siga as regras:
+                        Você é um docente especialista em produzir questões no estilo ENADE.
+                        A partir do TEXTO-BASE e da REFERÊNCIA que serão fornecidos no prompt do usuário, sua tarefa é criar **apenas** o conteúdo da questão (ENUNCIADO, ALTERNATIVAS, GABARITO, JUSTIFICATIVAS).
+                        Siga as regras:
                         - A questão deve ser inédita e alinhada à encomenda.
                         - O enunciado deve ser claro e afirmativo. Proibido pedir a 'incorreta'.
                         - Para múltipla escolha, crie 4 distratores plausíveis.
+                        - **NÃO** inclua o TEXTO-BASE ou a REFERÊNCIA na sua resposta. Gere apenas o que foi pedido.
                         """
                         usr_p_geracao = f"""
-                        GERAR QUESTÃO ENADE:
+                        GERAR CONTEÚDO DA QUESTÃO ENADE:
                         - Área: {area}, Curso: {curso}, Assunto: {assunto}
                         - Perfil: {st.session_state.perfil}, Competência: {st.session_state.competencia}
                         - Tipo: {question_type}, Dificuldade: {dificuldade}/5, Nível Bloom: {niv}
-                        - TEXTO-BASE: {st.session_state.text_base}
-                        - REFERÊNCIA: {st.session_state.ref_final}
-                        - FORMATO DE SAÍDA: ENUNCIADO: ..., ALTERNATIVAS: A..., B..., GABARITO:..., JUSTIFICATIVAS:...
-                        """
-                        questao_gerada = chamar_llm([{"role": "system", "content": sys_p_geracao}, {"role": "user", "content": usr_p_geracao}], provedor, modelo)
+                        - Use o seguinte formato de saída EXATAMENTE:
+                        ENUNCIADO: [Seu enunciado aqui]
+                        ALTERNATIVAS:
+                        A. [Alternativa A]
+                        B. [Alternativa B]
+                        C. [Alternativa C]
+                        D. [Alternativa D]
+                        E. [Alternativa E]
+                        GABARITO: [Letra X]
+                        JUSTIFICATIVAS:
+                        A. [Justificativa para A]
+                        B. [Justificativa para B]
+                        C. [Justificativa para C]
+                        D. [Justificativa para D]
+                        E. [Justificativa para E]
 
-                        # --- AJUSTE APLICADO AQUI ---
-                        # A string agora usa aspas triplas (""") para permitir múltiplas linhas.
-                        sys_p_analise = """
-                        Você é um avaliador de itens do ENADE, um especialista em pedagogia e avaliação. 
-                        Sua tarefa é fornecer uma análise crítica e construtiva da questão fornecida.
-                        Seja direto e objetivo. Use bullet points.
-                        AVALIE OS SEGUINTES PONTOS:
-                        - **Clareza e Pertinência:** O enunciado é claro? Ele se conecta bem ao texto-base?
-                        - **Qualidade dos Distratores:** As alternativas incorretas (distratores) são plausíveis? Elas testam erros conceituais comuns ou são fáceis demais?
-                        - **Alinhamento Pedagógico:** A questão realmente avalia a competência, o nível de dificuldade e o nível de Bloom solicitados?
-                        - **Potencial de Melhoria:** Dê uma sugestão para melhorar a questão.
+                        ---
+                        TEXTO-BASE PARA SUA ANÁLISE (NÃO COPIAR NA RESPOSTA):
+                        {st.session_state.text_base}
+                        REFERÊNCIA (NÃO COPIAR NA RESPOSTA):
+                        {st.session_state.ref_final}
                         """
-                        analise_qualidade = chamar_llm([{"role": "system", "content": sys_p_analise}, {"role": "user", "content": questao_gerada}], provedor, modelo, temperature=0.3)
+                        questao_parcial = chamar_llm([{"role": "system", "content": sys_p_geracao}, {"role": "user", "content": usr_p_geracao}], provedor, modelo)
 
-                        if questao_gerada and analise_qualidade:
-                            novo_item = {
-                                "titulo": f"Q{len(st.session_state.questoes_geradas) + 1}: {curso} - {assunto[:25]}...",
-                                "texto_completo": questao_gerada,
-                                "analise_qualidade": analise_qualidade,
-                                "contexto": {"area": area, "curso": curso, "assunto": assunto, "perfil": st.session_state.perfil, "competencia": st.session_state.competencia, "texto_base": st.session_state.text_base}
-                            }
-                            st.session_state.questoes_geradas.append(novo_item)
-                            st.session_state.selected_index = len(st.session_state.questoes_geradas) - 1
-                            st.success("Questão e análise geradas!")
-                            st.rerun()
+                        if questao_parcial:
+                            # --- MONTAGEM DA QUESTÃO FINAL COM O TEXTO-BASE ---
+                            ref_formatada = f"Referência: {st.session_state.ref_final}\n\n" if st.session_state.ref_final else ""
+                            questao_completa = f"TEXTO-BASE\n\n{st.session_state.text_base}\n\n{ref_formatada}{questao_parcial}"
+
+                            sys_p_analise = """
+                            Você é um avaliador de itens do ENADE, um especialista em pedagogia e avaliação. 
+                            Sua tarefa é fornecer uma análise crítica e construtiva da questão fornecida.
+                            Seja direto e objetivo. Use bullet points.
+                            AVALIE OS SEGUINTES PONTOS:
+                            - **Clareza e Pertinência:** O enunciado é claro? Ele se conecta bem ao texto-base?
+                            - **Qualidade dos Distratores:** As alternativas incorretas (distratores) são plausíveis? Elas testam erros conceituais comuns ou são fáceis demais?
+                            - **Alinhamento Pedagógico:** A questão realmente avalia a competência, o nível de dificuldade e o nível de Bloom solicitados?
+                            - **Potencial de Melhoria:** Dê uma sugestão para melhorar a questão.
+                            """
+                            analise_qualidade = chamar_llm([{"role": "system", "content": sys_p_analise}, {"role": "user", "content": questao_completa}], provedor, modelo, temperature=0.3)
+
+                            if analise_qualidade:
+                                novo_item = {
+                                    "titulo": f"Q{len(st.session_state.questoes_geradas) + 1}: {curso} - {assunto[:25]}...",
+                                    "texto_completo": questao_completa,
+                                    "analise_qualidade": analise_qualidade,
+                                    "contexto": {"area": area, "curso": curso, "assunto": assunto, "perfil": st.session_state.perfil, "competencia": st.session_state.competencia, "texto_base": st.session_state.text_base}
+                                }
+                                st.session_state.questoes_geradas.append(novo_item)
+                                st.session_state.selected_index = len(st.session_state.questoes_geradas) - 1
+                                st.success("Questão e análise geradas!")
+                                st.rerun()
 
 with col_output:
     st.header("2. Análise e Refinamento")
