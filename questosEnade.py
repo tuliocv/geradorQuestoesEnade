@@ -261,6 +261,7 @@ with col_input:
                         - A questão deve ser inédita e alinhada à encomenda.
                         - O enunciado deve ser claro e afirmativo. Proibido pedir a 'incorreta'.
                         - **NÃO** inclua o TEXTO-BASE ou a REFERÊNCIA na sua resposta. Gere apenas o conteúdo da questão.
+                        - As alternativas poderiam ser ligeiramente reformuladas para evitar que a resposta correta seja facilmente identificada apenas pela eliminação das alternativas claramente incorretas. Isto é, a alternativa incorreta deve apresentar um argumento sutilmente plausível, mas ainda incorreto.
                         
                         REGRA ESPECÍFICA PARA O TIPO DE QUESTÃO '{question_type}':
                         {instrucao_especifica}
