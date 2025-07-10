@@ -154,10 +154,11 @@ with st.container():
         if not st.session_state.auto:
             with st.spinner("Gerando texto-base automaticamente..."):
                 prompts = [
-                    {"role": "system", "content": "Você gera textos-base concisos para ENADE."},
+                    {"role": "system", "content": f"Você é um docente do {curso} que produz textos-base contextualizados para questões do ENADE."},
                     {"role": "user", "content":
-                        f"Gere um texto com 5 ou mais frases para situação-problema ENADE em "
+                        f"Gere um texto com no mínimo 5 frases para situação-problema da questão ENADE em "
                         f"Área: {area}, Curso: {curso}, Assunto: {assunto}."
+                     "Não inclua nenhum comentário, apenas o texto-base como saída."
                     }
                 ]
                 tb = chamar_llm(prompts, provedor, modelo, temperature=0.5, max_tokens=300)
