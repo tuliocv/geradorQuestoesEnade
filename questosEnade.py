@@ -154,12 +154,10 @@ with st.container():
         if not st.session_state.auto:
             with st.spinner("Gerando texto-base automaticamente..."):
                 prompts = [
-                    {"role": "system", "content": f"Você é um docente do {curso} que produz textos-base contextualizados para questões do ENADE. Esses textos devem possuir complexidade e utilizar conceitos e definições da área."},
-                    {"role": "user", "content":
-                        f"Gere um texto com no mínimo 5 frases para situação-problema da questão ENADE em "
-                        f"Área: {area}, Curso: {curso}, Assunto: {assunto}."
-                     "Não inclua nenhum comentário, apenas o texto-base como saída."
-                    }
+                    {"role": "system",
+                     "content": f"Você é um docente do {curso} que produz textos-base contextualizados para questões do ENADE. Esses textos devem possuir complexidade e utilizar conceitos e definições da área."},
+                    {"role": "user",
+                     "content": f"Gere um texto com no mínimo 5 frases para situação-problema da questão ENADE em Área: {area}, Curso: {curso}, Assunto: {assunto}. Não inclua nenhum comentário, apenas o texto-base como saída."}
                 ]
                 tb = chamar_llm(prompts, provedor, modelo, temperature=0.5, max_tokens=300)
                 st.session_state.text_base = tb or ""
@@ -181,24 +179,16 @@ with st.container():
                     if txt:
                         prompts = [
                             {"role": "system", "content": "Você gera resumos concisos para ENADE."},
-                            {"role": "user", "content":
-                                f"Resuma em até 3 frases para situação-problema ENADE:\n\n{txt}"
-                            }
+                            {"role": "user", "content": f"Resuma em até 3 frases para situação-problema ENADE:\n\n{txt}"}
                         ]
-                        st.session_state.text_base = chamar_llm(
-                            prompts, provedor, modelo,
-                            temperature=0.4, max_tokens=250
-                        )
+                        st.session_state.text_base = chamar_llm(prompts, provedor, modelo, temperature=0.4, max_tokens=250)
                         st.success("Resumo pronto!")
         else:
             if st.button("🔍 Buscar artigos"):
                 with st.spinner("Buscando..."):
                     st.session_state.search_results = search_articles(assunto)
             if st.session_state.search_results:
-                opts = [
-                    f"{r['title']} ({r['url']})"
-                    for r in st.session_state.search_results
-                ]
+                opts = [f"{r['title']} ({r['url']})" for r in st.session_state.search_results]
                 sel = st.selectbox("Selecione:", opts)
                 if st.button("▶️ Usar artigo"):
                     art = st.session_state.search_results[opts.index(sel)]
@@ -207,14 +197,9 @@ with st.container():
                         if cont:
                             prompts = [
                                 {"role": "system", "content": "Você gera resumos concisos para ENADE."},
-                                {"role": "user", "content":
-                                    f"Resuma em até 3 frases para situação-problema ENADE:\n\n{cont}"
-                                }
+                                {"role": "user", "content": f"Resuma em até 3 frases para situação-problema ENADE:\n\n{cont}"}
                             ]
-                            st.session_state.text_base = chamar_llm(
-                                prompts, provedor, modelo,
-                                temperature=0.4, max_tokens=250
-                            )
+                            st.session_state.text_base = chamar_llm(prompts, provedor, modelo, temperature=0.4, max_tokens=250)
                             st.session_state.fonte_info = {
                                 "titulo": tit,
                                 "autor": aut,
@@ -242,10 +227,8 @@ if st.session_state.text_base:
         data_pub = c4.text_input("Data de publicação", placeholder="dd mmm. aaaa")
         if autor and titulo and veiculo and data_pub:
             hoje = datetime.now()
-            meses = [
-                "jan.", "fev.", "mar.", "abr.", "mai.", "jun.",
-                "jul.", "ago.", "set.", "out.", "nov.", "dez."
-            ]
+            meses = ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.",
+                     "jul.", "ago.", "set.", "out.", "nov.", "dez."]
             acesso = f"{hoje.day} {meses[hoje.month-1]}. {hoje.year}"
             st.session_state.ref_final = (
                 f"{autor}. {titulo}. {veiculo}, {data_pub}. "
@@ -265,6 +248,11 @@ if st.session_state.text_base and (st.session_state.auto or st.session_state.ref
         perfil = st.text_input("Perfil do egresso")
         comp = st.text_input("Competência")
         niv = st.select_slider("Nível Bloom", options=BLOOM_LEVELS, value="Analisar")
+        dificuldade = st.slider(
+            "Nível de dificuldade da questão",
+            min_value=1, max_value=5, value=3,
+            help="1 = Muito fácil; 5 = Muito difícil"
+        )
         verbs = st.multiselect("Verbos de comando", BLOOM_VERBS[niv], default=BLOOM_VERBS[niv][:2])
         obs = st.text_area("Observações (opcional)")
         gerar = st.form_submit_button("🚀 Gerar Questão")
@@ -313,6 +301,7 @@ Curso: {curso}
 Assunto: {assunto}
 Perfil: {perfil}
 Competência: {comp}
+Dificuldade: {dificuldade}/5
 Verbos de comando: {', '.join(verbs)}
 Observações: {obs}
 
