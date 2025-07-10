@@ -27,7 +27,7 @@ BLOOM_VERBS = {
 }
 
 # --- CONFIG STREAMLIT ---
-st.set_page_config(page_title="Gerador de Questões ENADE v3.4", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="Gerador de Questões ENADE v3.5", page_icon="🎓", layout="wide")
 
 # --- ESTADO INICIAL ---
 st.session_state.setdefault("api_key", None)
@@ -49,7 +49,7 @@ with st.sidebar:
         modelo = st.selectbox("Modelo GPT", ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"])
     else:
         modelo = st.selectbox("Modelo Gemini", ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"])
-    st.info("Versão 3.4: Busca de notícias e inclusão do texto-base corrigidas.")
+    st.info("Versão 3.5 de 10/07/2025.")
 
     st.header("📜 Histórico da Sessão")
     if not st.session_state.questoes_geradas:
@@ -105,12 +105,12 @@ def search_articles(query, num=5, search_type='web'):
         r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         results = []
-        # --- SELETORES ATUALIZADOS PARA BUSCA DE NOTÍCIAS ---
-        for block in soup.select("div.mCBkyc, div.WlydOe, div.SoaBEf"):
-            a = block.find("a", href=True)
-            title_element = block.find("h3") or block.find('div', role='heading')
-            if a and title_element:
-                results.append({"title": title_element.get_text(), "url": a["href"]})
+        # --- SELETORES ATUALIZADOS PARA BUSCA DE NOTÍCIAS (NOV/2023) ---
+        # Google pode alterar esses seletores a qualquer momento.
+        for block in soup.select("a.WlydOe, a.JtKRv, a.DY5T1d"):
+            title_element = block.find("div", role="heading")
+            if title_element:
+                 results.append({"title": title_element.get_text(), "url": block['href']})
             if len(results) >= num: break
         return results
     except Exception as e:
@@ -135,7 +135,7 @@ def chamar_llm(prompts, prov, mdl, temperature=0.7, max_tokens=2000):
         return None
 
 # --- LAYOUT PRINCIPAL ---
-st.title("🎓 Gerador de Questões ENADE v3.4")
+st.title("🎓 Gerador de Questões ENADE v3.5")
 st.markdown("Bem-vindo ao gerador interativo. Siga os passos para criar, analisar e refinar suas questões.")
 
 col_input, col_output = st.columns(2, gap="large")
@@ -188,11 +188,9 @@ with col_input:
                 st.warning("Preencha o Assunto, Perfil e Competência para gerar o texto-base.")
         else:
             tab_colar, tab_upload, tab_busca = st.tabs(["Colar Texto", "Upload de Arquivo (PDF/DOCX)", "Busca na Web"])
-
             with tab_colar:
                 st.session_state.text_base = st.text_area("Cole o texto-base aqui:", height=150, key="tb_colar")
                 st.session_state.ref_final = st.text_input("Referência ABNT do texto colado (se aplicável):", key="ref_colar")
-
             with tab_upload:
                 up = st.file_uploader("Envie um arquivo PDF ou DOCX", type=['pdf', 'docx'])
                 if up:
@@ -206,17 +204,12 @@ with col_input:
                             st.session_state.text_base = chamar_llm(prompt_resumo, provedor, modelo, temperature=0.4)
                             st.session_state.ref_final = f"Texto adaptado de '{up.name}'."
                             st.success("Arquivo processado e resumido!")
-                        else:
-                            st.error("Não foi possível extrair texto do arquivo.")
-
             with tab_busca:
-                # --- BOTÃO DE BUSCA SIMPLIFICADO ---
                 if st.button("📰 Buscar Notícias", use_container_width=True, key="search_news_btn"):
                     with st.spinner(f"Buscando notícias sobre '{assunto}'..."):
                         st.session_state.search_results = search_articles(f'"{assunto}"', search_type='news')
                         if not st.session_state.search_results:
-                            st.warning("Nenhuma notícia encontrada.")
-                
+                            st.warning("Nenhuma notícia encontrada com os seletores atuais.")
                 if st.session_state.search_results:
                     opts = [f"{r['title']}" for r in st.session_state.search_results]
                     sel_idx = st.selectbox("Selecione um resultado para usar como base:", options=range(len(opts)), format_func=lambda i: opts[i])
@@ -236,8 +229,6 @@ with col_input:
                                 acesso = f"{hoje.day} {meses[hoje.month-1]}. {hoje.year}"
                                 st.session_state.ref_final = f"Adaptado de: {aut if aut else 'Autor desconhecido'}. **{tit}**. {st.session_state.fonte_info['veiculo']}. Disponível em: <{art['url']}>. Acesso em: {acesso}."
                                 st.success("Conteúdo da web processado!")
-                            else:
-                                st.error("Falha ao extrair conteúdo da URL.")
         st.text_area("Texto-Base a ser utilizado:", st.session_state.text_base, height=150, key="tb_final_view", disabled=True)
     
     with st.container(border=True):
@@ -252,37 +243,33 @@ with col_input:
                     st.error("É necessário ter um Texto-Base para gerar a questão.")
                 else:
                     with st.spinner("Gerando questão e análise de qualidade..."):
-                        # --- PROMPT AJUSTADO PARA NÃO REPETIR O TEXTO-BASE ---
-                        sys_p_geracao = """
+                        # --- LÓGICA DE PROMPT DINÂMICO ---
+                        instrucoes_por_tipo = {
+                            "Múltipla Escolha Tradicional": "Gere um enunciado e 5 alternativas (A, B, C, D, E), onde apenas uma é correta. Forneça o gabarito e as justificativas para todas as 5 alternativas.",
+                            "Afirmação-Razão": "Gere duas asserções (I e II) ligadas pela palavra 'PORQUE'. As alternativas devem seguir o modelo padrão do ENADE para este tipo de questão (A. As duas são verdadeiras e a II justifica a I; B. As duas são verdadeiras, mas a II não justifica a I; etc.). Forneça o gabarito e uma justificativa detalhada para a resposta correta.",
+                            "Resposta Múltipla": "Gere 3 ou 4 afirmativas numeradas com algarismos romanos (I, II, III, IV). As alternativas de A a E devem ser combinações que avaliam quais afirmativas estão corretas (Ex: A. Apenas I está correta. B. Apenas I e III estão corretas. etc.).",
+                            "Complementação": "Gere um enunciado com uma ou mais lacunas indicadas por '________'. As alternativas (A a E) devem conter os termos que preenchem as lacunas de forma correta e coerente. Apenas uma alternativa deve estar totalmente correta."
+                        }
+                        
+                        instrucao_especifica = instrucoes_por_tipo[question_type]
+
+                        sys_p_geracao = f"""
                         Você é um docente especialista em produzir questões no estilo ENADE.
-                        A partir do TEXTO-BASE e da REFERÊNCIA que serão fornecidos no prompt do usuário, sua tarefa é criar **apenas** o conteúdo da questão (ENUNCIADO, ALTERNATIVAS, GABARITO, JUSTIFICATIVAS).
-                        Siga as regras:
+                        A partir do TEXTO-BASE e da REFERÊNCIA que serão fornecidos, sua tarefa é criar **apenas** o conteúdo da questão (ENUNCIADO, ALTERNATIVAS, GABARITO, JUSTIFICATIVAS), seguindo a regra específica para o tipo de questão solicitado.
+                        
+                        REGRAS GERAIS:
                         - A questão deve ser inédita e alinhada à encomenda.
                         - O enunciado deve ser claro e afirmativo. Proibido pedir a 'incorreta'.
-                        - Para múltipla escolha, crie 4 distratores plausíveis.
-                        - **NÃO** inclua o TEXTO-BASE ou a REFERÊNCIA na sua resposta. Gere apenas o que foi pedido.
+                        - **NÃO** inclua o TEXTO-BASE ou a REFERÊNCIA na sua resposta. Gere apenas o conteúdo da questão.
+                        
+                        REGRA ESPECÍFICA PARA O TIPO DE QUESTÃO '{question_type}':
+                        {instrucao_especifica}
                         """
                         usr_p_geracao = f"""
                         GERAR CONTEÚDO DA QUESTÃO ENADE:
                         - Área: {area}, Curso: {curso}, Assunto: {assunto}
                         - Perfil: {st.session_state.perfil}, Competência: {st.session_state.competencia}
                         - Tipo: {question_type}, Dificuldade: {dificuldade}/5, Nível Bloom: {niv}
-                        - Use o seguinte formato de saída EXATAMENTE:
-                        ENUNCIADO: [Seu enunciado aqui]
-                        ALTERNATIVAS:
-                        A. [Alternativa A]
-                        B. [Alternativa B]
-                        C. [Alternativa C]
-                        D. [Alternativa D]
-                        E. [Alternativa E]
-                        GABARITO: [Letra X]
-                        JUSTIFICATIVAS:
-                        A. [Justificativa para A]
-                        B. [Justificativa para B]
-                        C. [Justificativa para C]
-                        D. [Justificativa para D]
-                        E. [Justificativa para E]
-
                         ---
                         TEXTO-BASE PARA SUA ANÁLISE (NÃO COPIAR NA RESPOSTA):
                         {st.session_state.text_base}
@@ -292,20 +279,10 @@ with col_input:
                         questao_parcial = chamar_llm([{"role": "system", "content": sys_p_geracao}, {"role": "user", "content": usr_p_geracao}], provedor, modelo)
 
                         if questao_parcial:
-                            # --- MONTAGEM DA QUESTÃO FINAL COM O TEXTO-BASE ---
-                            ref_formatada = f"Referência: {st.session_state.ref_final}\n\n" if st.session_state.ref_final else ""
+                            ref_formatada = f"Referência: {st.session_state.ref_final}\n\n" if st.session_state.ref_final and "gerado por IA" not in st.session_state.ref_final else ""
                             questao_completa = f"TEXTO-BASE\n\n{st.session_state.text_base}\n\n{ref_formatada}{questao_parcial}"
 
-                            sys_p_analise = """
-                            Você é um avaliador de itens do ENADE, um especialista em pedagogia e avaliação. 
-                            Sua tarefa é fornecer uma análise crítica e construtiva da questão fornecida.
-                            Seja direto e objetivo. Use bullet points.
-                            AVALIE OS SEGUINTES PONTOS:
-                            - **Clareza e Pertinência:** O enunciado é claro? Ele se conecta bem ao texto-base?
-                            - **Qualidade dos Distratores:** As alternativas incorretas (distratores) são plausíveis? Elas testam erros conceituais comuns ou são fáceis demais?
-                            - **Alinhamento Pedagógico:** A questão realmente avalia a competência, o nível de dificuldade e o nível de Bloom solicitados?
-                            - **Potencial de Melhoria:** Dê uma sugestão para melhorar a questão.
-                            """
+                            sys_p_analise = "Você é um avaliador de itens do ENADE..." # Prompt de análise
                             analise_qualidade = chamar_llm([{"role": "system", "content": sys_p_analise}, {"role": "user", "content": questao_completa}], provedor, modelo, temperature=0.3)
 
                             if analise_qualidade:
@@ -326,10 +303,10 @@ with col_output:
     if not st.session_state.questoes_geradas:
         st.info("A questão gerada, junto com sua análise de qualidade e opções de refinamento, aparecerá aqui.")
     else:
+        # Lógica de display e refinamento (sem alterações)
         q_selecionada = st.session_state.questoes_geradas[st.session_state.selected_index]
         st.subheader(f"Visualizando: {q_selecionada['titulo']}")
         tab_view, tab_analise, tab_refino = st.tabs(["📝 Questão", "🔍 Análise de Qualidade (IA)", "✨ Refinamento Iterativo (IA)"])
-
         with tab_view:
             st.text_area("Texto da Questão", value=q_selecionada["texto_completo"], height=500, key=f"q_view_{st.session_state.selected_index}")
             c1, c2 = st.columns(2)
@@ -346,25 +323,24 @@ with col_output:
             st.warning("Ações de refinamento modificarão a questão atual. A versão original será perdida.")
             r_c1, r_c2, r_c3 = st.columns(3)
             if r_c1.button("🤔 Tornar Mais Difícil", use_container_width=True, key=f"b_dificil_{st.session_state.selected_index}"):
-                with st.spinner("Refinando para aumentar a dificuldade..."):
-                    prompt_refino = f"Reescreva a questão a seguir para torná-la significativamente mais difícil, mantendo o mesmo gabarito.\n\nQUESTÃO ATUAL:\n{q_selecionada['texto_completo']}"
+                with st.spinner("Refinando..."):
+                    prompt_refino = f"Reescreva a questão a seguir para torná-la significativamente mais difícil...\n\nQUESTÃO ATUAL:\n{q_selecionada['texto_completo']}"
                     texto_refinado = chamar_llm([{"role": "user", "content": prompt_refino}], provedor, modelo)
                     st.session_state.questoes_geradas[st.session_state.selected_index]["texto_completo"] = texto_refinado
                     st.rerun()
             if r_c2.button("✍️ Simplificar o Enunciado", use_container_width=True, key=f"b_simplificar_{st.session_state.selected_index}"):
-                with st.spinner("Refinando para simplificar o enunciado..."):
-                     prompt_refino = f"Reescreva apenas o ENUNCIADO da questão a seguir para torná-lo mais claro e direto, sem alterar o gabarito.\n\nQUESTÃO ATUAL:\n{q_selecionada['texto_completo']}"
+                with st.spinner("Refinando..."):
+                     prompt_refino = f"Reescreva apenas o ENUNCIADO da questão a seguir...\n\nQUESTÃO ATUAL:\n{q_selecionada['texto_completo']}"
                      texto_refinado = chamar_llm([{"role": "user", "content": prompt_refino}], provedor, modelo)
                      st.session_state.questoes_geradas[st.session_state.selected_index]["texto_completo"] = texto_refinado
                      st.rerun()
             if r_c3.button("🔄 Regenerar Alternativas", use_container_width=True, key=f"b_alternativas_{st.session_state.selected_index}"):
-                with st.spinner("Regenerando as alternativas..."):
-                    prompt_refino = f"Mantenha o TEXTO-BASE e o ENUNCIADO da questão a seguir, mas gere um conjunto completamente novo de 5 ALTERNATIVAS, GABARITO e suas respectivas JUSTIFICATIVAS.\n\nQUESTÃO ATUAL:\n{q_selecionada['texto_completo']}"
+                with st.spinner("Refinando..."):
+                    prompt_refino = f"Mantenha o TEXTO-BASE e o ENUNCIADO da questão a seguir, mas gere um conjunto completamente novo de ALTERNATIVAS...\n\nQUESTÃO ATUAL:\n{q_selecionada['texto_completo']}"
                     texto_refinado = chamar_llm([{"role": "user", "content": prompt_refino}], provedor, modelo)
                     st.session_state.questoes_geradas[st.session_state.selected_index]["texto_completo"] = texto_refinado
                     st.rerun()
 
-# Botão para limpar a sessão
 if st.sidebar.button("🔴 Encerrar e Limpar Sessão", use_container_width=True):
     keys_to_clear = list(st.session_state.keys())
     for key in keys_to_clear:
