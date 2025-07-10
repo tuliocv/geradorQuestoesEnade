@@ -264,7 +264,7 @@ if st.session_state.text_base and (st.session_state.auto or st.session_state.ref
                 referencia_texto = f"\nREFERÊNCIA:\n{st.session_state.ref_final}\n"
 
             sys_p = """
-Você é docente especialista do INEP. Ao confeccionar a questão, ela deve:
+Você é docente especialista em produzir questão no estilo EANDE. Ao confeccionar a questão, ela deve:
 - Ser inédita e seguir a encomenda da banca (perfil, competência e conteúdo).
 - Ter texto-base relevante e enunciado claro e afirmativo.
 - Ser proibido solicitar alternativa "incorreta" ou "exceto".
@@ -308,8 +308,9 @@ Observações: {obs}
 TEXTO-BASE:
 {st.session_state.text_base}
 {referencia_texto}
-Por favor, siga EXATAMENTE o formato acima e não altere o texto-base. Uso o texto-base na forma originnal. 
+Por favor, siga EXATAMENTE o formato acima e não altere o texto-base. Uso o texto-base na forma original. 
 Não incluir as palavras NA SAÍDA: CONTEXTUALIZAÇÃO e TEXTO-BASE.
+Questão no formato objetiva.
 """
             out = chamar_llm(
                 [{"role": "system", "content": sys_p},
