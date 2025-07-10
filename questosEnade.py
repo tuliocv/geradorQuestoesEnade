@@ -156,7 +156,7 @@ with st.container():
                 prompts = [
                     {"role": "system", "content": "Você gera textos-base concisos para ENADE."},
                     {"role": "user", "content":
-                        f"Gere ~5 frases de alto nível para situação-problema ENADE em "
+                        f"Gere um texto com 5 ou mais frases para situação-problema ENADE em "
                         f"Área: {area}, Curso: {curso}, Assunto: {assunto}."
                     }
                 ]
