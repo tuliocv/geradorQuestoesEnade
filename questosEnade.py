@@ -320,7 +320,7 @@ TEXTO-BASE:
 {st.session_state.text_base}
 {referencia_texto}
 Por favor, siga EXATAMENTE o formato acima e não altere o texto-base. Uso o texto-base na forma originnal. 
-Não incluir as palavras NA SAÍDA: CONTEXTUALIZAÇÃO, ENUNCIADO e TEXTO-BASE.
+Não incluir as palavras NA SAÍDA: CONTEXTUALIZAÇÃO e TEXTO-BASE.
 """
             out = chamar_llm(
                 [{"role": "system", "content": sys_p},
