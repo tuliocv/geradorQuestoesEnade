@@ -43,7 +43,7 @@ with st.sidebar:
     if provedor_ia == "OpenAI (GPT)":
         api_key = st.text_input("Sua Chave de API da OpenAI", type="password")
         model = st.selectbox("Modelo GPT", ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"], help="gpt-4o-mini é o mais rápido e barato.")
-    elif provedor_ia == "Google (Gemini)":
+    else:
         api_key = st.text_input("Sua Chave de API do Google AI", type="password")
         model = st.selectbox("Modelo Gemini", ["gemini-1.5-flash-latest", "gemini-1.5-pro-latest"], help="Flash é mais rápido e barato.")
 
@@ -58,16 +58,19 @@ if not api_key:
 @st.cache_data(ttl=3600)
 def extrair_conteudo_url(url: str):
     try:
-        r = requests.get(url, timeout=10); r.raise_for_status()
+        r = requests.get(url, timeout=10)
+        r.raise_for_status()
         soup = BeautifulSoup(r.text, "html.parser")
         titulo = soup.title.string if soup.title else ""
         autor_meta = soup.find("meta", attrs={"name": "author"})
         autor = autor_meta['content'] if autor_meta else ""
-        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]): tag.decompose()
+        for tag in soup(["script", "style", "nav", "footer", "header", "aside"]):
+            tag.decompose()
         texto = " ".join(soup.stripped_strings)
         return texto, titulo, autor
     except Exception as e:
-        st.error(f"Erro ao extrair conteúdo da URL: {e}"); return None, None, None
+        st.error(f"Erro ao extrair conteúdo da URL: {e}")
+        return None, None, None
 
 def extrair_texto_upload(upload):
     try:
@@ -76,9 +79,10 @@ def extrair_texto_upload(upload):
             return "".join(p.extract_text() or "" for p in reader.pages)
         elif upload.type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
             doc = Document(BytesIO(upload.read()))
-            return "\n".join([p.text for p in doc.paragraphs])
+            return "\n".join(p.text for p in doc.paragraphs)
     except Exception as e:
-        st.error(f"Erro ao ler o arquivo: {e}"); return None
+        st.error(f"Erro ao ler o arquivo: {e}")
+    return None
 
 def chamar_llm(prompt_messages, provider, model, temperature=0.7, max_tokens=2000, use_json=False):
     try:
@@ -93,8 +97,7 @@ def chamar_llm(prompt_messages, provider, model, temperature=0.7, max_tokens=200
                 response_format=response_format
             )
             return resp.choices[0].message.content.strip()
-        
-        elif provider == "Google (Gemini)":
+        else:
             genai.configure(api_key=api_key)
             generation_config = genai.GenerationConfig(
                 temperature=temperature,
@@ -102,190 +105,238 @@ def chamar_llm(prompt_messages, provider, model, temperature=0.7, max_tokens=200
                 response_mime_type="application/json" if use_json else "text/plain"
             )
             model_gemini = genai.GenerativeModel(model)
-            # Concatena mensagens para o formato do Gemini
-            full_prompt = "\n".join([f"**{m['role']}**: {m['content']}" for m in prompt_messages])
+            full_prompt = "\n".join(f"**{m['role']}**: {m['content']}" for m in prompt_messages)
             resp = model_gemini.generate_content(full_prompt, generation_config=generation_config)
             return resp.text
-            
     except Exception as e:
-        st.error(f"Erro na chamada à API do {provider}: {e}"); return None
+        st.error(f"Erro na chamada à API do {provider}: {e}")
+    return None
 
 # --- INICIALIZAÇÃO E LAYOUT DO APP ---
 st.title("🎓 Gerador de Questões ENADE v2.1")
 
-if "full_text" not in st.session_state: st.session_state.full_text = ""
-if "text_base" not in st.session_state: st.session_state.text_base = ""
-if "questao_gerada" not in st.session_state: st.session_state.questao_gerada = None
+# Estado inicial
+if "text_base" not in st.session_state:
+    st.session_state.text_base = ""
+if "questao_gerada" not in st.session_state:
+    st.session_state.questao_gerada = None
+if "lista_questoes" not in st.session_state:
+    st.session_state.lista_questoes = []
 
-with st.container(border=True):
+# --- 1. Definição do Escopo ---
+with st.container():
     st.header("1. Definição do Escopo")
     c1, c2, c3 = st.columns(3)
     area_selecionada = c1.selectbox("Área do conhecimento", list(AREAS_ENADE.keys()))
     curso_selecionado = c2.selectbox("Curso", AREAS_ENADE[area_selecionada])
     assunto = c3.text_input("Tópico / Assunto central", placeholder="Ex: IA na arbitragem")
-    st.session_state.escopo = {"area": area_selecionada, "curso": curso_selecionado, "assunto": assunto}
+    st.session_state.escopo = {
+        "area": area_selecionada,
+        "curso": curso_selecionado,
+        "assunto": assunto
+    }
 
-with st.container(border=True):
-    st.header("2. Fornecimento do Texto-Base")
-    metodo = st.radio("Origem do texto:", ["URL", "Upload de Arquivo"], horizontal=True, key="metodo_upload")
-    
-    if metodo == "URL":
-        url = st.text_input("Cole a URL completa do artigo ou notícia")
-        if st.button("▶️ Extrair da URL"):
-            texto, titulo, autor = extrair_conteudo_url(url)
-            if texto:
-                st.session_state.full_text = texto
-                st.session_state.fonte_info = {"titulo": titulo, "autor": autor, "veiculo": url.split('/')[2], "link": url}
-    else:
-        upload = st.file_uploader("Envie um arquivo PDF ou DOCX", type=["pdf", "docx"])
-        if upload:
-            texto = extrair_texto_upload(upload)
-            if texto:
-                st.session_state.full_text = texto
-                st.session_state.fonte_info = {"titulo": "", "autor": "", "veiculo": "", "link": upload.name}
+# --- 2. Inserção do Texto-Base (Opcional) ---
+with st.container():
+    st.header("2. Inserção do Texto-Base (Opcional)")
+    inserir_tb = st.radio(
+        "Você deseja inserir um texto-base?",
+        ["Não, deixar IA gerar automaticamente", "Sim, vou inserir um texto-base"],
+        horizontal=True
+    )
 
-if st.session_state.full_text:
-    with st.expander("Ver / Editar Texto Completo Extraído"):
-        st.session_state.full_text = st.text_area("Texto", st.session_state.full_text, height=250)
+    if inserir_tb.startswith("Sim"):
+        metodo_tb = st.radio(
+            "Como você quer fornecer o texto-base?",
+            ["Upload de PDF para IA resumir", "Buscar na Internet (URL)"],
+            horizontal=True
+        )
 
-with st.container(border=True):
-    st.header("3. Definição do Trecho-Base e Referência")
-    if st.session_state.full_text:
-        modo_tb = st.radio("Como obter o trecho para a questão?", ["Selecionar manualmente", "Resumo automático (via IA)"], horizontal=True)
-        
-        if modo_tb == "Selecionar manualmente":
-            paras = [p.strip() for p in st.session_state.full_text.split('\n') if len(p.strip()) > 100]
-            sel = st.multiselect("Escolha os parágrafos:", paras, format_func=lambda p: textwrap.shorten(p, 150, placeholder="…"))
-            if sel: st.session_state.text_base = "\n\n".join(sel)
+        if metodo_tb.startswith("Upload"):
+            upload_tb = st.file_uploader(
+                "Envie um PDF para resumirmos",
+                type=["pdf"]
+            )
+            if upload_tb:
+                with st.spinner("Resumindo PDF..."):
+                    texto_pdf = extrair_texto_upload(upload_tb)
+                    if texto_pdf:
+                        prompt = [
+                            {"role":"system","content":"Você cria resumos concisos para questões ENADE."},
+                            {"role":"user","content":
+                                f"Resuma este texto em até 3 frases, "
+                                f"focando nos principais pontos para uma situação-problema ENADE:\n\n{texto_pdf}"
+                            }
+                        ]
+                        st.session_state.text_base = chamar_llm(
+                            prompt, provider=provedor_ia, model=model,
+                            temperature=0.4, max_tokens=250
+                        )
+                        st.success("Resumo gerado!")
         else:
-            if st.button("🔎 Gerar resumo automático"):
-                prompt = [{"role": "system", "content": "Você cria resumos concisos para questões ENADE."},
-                          {"role": "user", "content": f"Resuma o texto a seguir em até 3 frases, focando nos pontos principais para uma situação-problema ENADE:\n\n{st.session_state.full_text}"}]
-                with st.spinner("Resumindo o texto..."):
-                    st.session_state.text_base = chamar_llm(prompt, provider=provedor_ia, model=model, temperature=0.4, max_tokens=250)
+            url_tb = st.text_input("Cole aqui a URL do conteúdo")
+            if st.button("▶️ Extrair e resumir URL"):
+                with st.spinner("Processando URL..."):
+                    texto_web, titulo_web, autor_web = extrair_conteudo_url(url_tb)
+                    if texto_web:
+                        prompt = [
+                            {"role":"system","content":"Você cria resumos concisos para questões ENADE."},
+                            {"role":"user","content":
+                                f"Resuma este texto em até 3 frases, "
+                                f"focando nos principais pontos para uma situação-problema ENADE:\n\n{texto_web}"
+                            }
+                        ]
+                        st.session_state.text_base = chamar_llm(
+                            prompt, provider=provedor_ia, model=model,
+                            temperature=0.4, max_tokens=250
+                        )
+                        st.session_state.fonte_info = {
+                            "titulo": titulo_web,
+                            "autor": autor_web,
+                            "veiculo": url_tb.split("/")[2],
+                            "link": url_tb
+                        }
+                        st.success("Resumo gerado!")
+    else:
+        st.info("A IA gerará um texto-base automaticamente depois.")
 
-        if st.session_state.text_base:
-            st.text_area("Texto-Base final (edite se necessário):", value=st.session_state.text_base, height=150, key="text_base_final")
-
+# --- 3. Texto-Base Final e Referência ---
+if st.session_state.text_base:
+    with st.container():
+        st.header("3. Texto-Base Final e Referência")
+        st.session_state.text_base = st.text_area(
+            "Texto-Base (edite se quiser)", st.session_state.text_base, height=200
+        )
         info = st.session_state.get("fonte_info", {})
         c1, c2, c3, c4 = st.columns(4)
         autor_ref = c1.text_input("Autor (SOBRENOME, Nome)", value=info.get("autor", ""))
         titulo_ref = c2.text_input("Título", value=info.get("titulo", ""))
         veiculo_ref = c3.text_input("Veículo", value=info.get("veiculo", ""))
         data_pub_ref = c4.text_input("Data de publicação", placeholder="dd mmm. aaaa")
-        
         if all([autor_ref, titulo_ref, veiculo_ref, data_pub_ref]):
-            hoje, meses = datetime.now(), ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."]
-            acesso = f"{hoje.day} {meses[hoje.month-1]}. {hoje.year}"
-            referencia_abnt = f"{autor_ref}. {titulo_ref}. {veiculo_ref}, {data_pub_ref}. Disponível em: <{info.get('link', 'N/D')}>. Acesso em: {acesso}."
-            st.text_area("Referência final:", value=referencia_abnt, height=100, key="referencia_final")
+            hoje = datetime.now()
+            meses = ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.", "jul.", "ago.", "set.", "out.", "nov.", "dez."]
+            acesso = f"{hoje.day} {meses[hoje.month-1]} {hoje.year}"
+            referencia_abnt = (
+                f"{autor_ref}. {titulo_ref}. {veiculo_ref}, {data_pub_ref}. "
+                f"Disponível em: <{info.get('link','N/D')}>. Acesso em: {acesso}."
+            )
+            st.text_area("Referência ABNT:", referencia_abnt, height=100, key="referencia_final")
 
-with st.container(border=True):
-    st.header("4. Parâmetros e Geração da Questão")
-    if st.session_state.get("text_base_final") and st.session_state.get("referencia_final"):
-        with st.form("generation_form"):
-            st.subheader("Parâmetros da Questão (ENADE)")
-            perfil = st.text_input("Perfil do egresso", placeholder="Ex: Profissional crítico, ético e reflexivo...")
-            competencia = st.text_input("Competência", placeholder="Ex: Avaliar criticamente o impacto de novas tecnologias...")
-            
-            st.subheader("Taxonomia de Bloom")
+# --- 4. Geração da Questão ---
+if st.session_state.get("texto_base") and st.session_state.get("referencia_final"):
+    with st.container():
+        st.header("4. Parâmetros e Geração da Questão")
+        with st.form("gen_form"):
+            perfil = st.text_input("Perfil do egresso")
+            competencia = st.text_input("Competência")
             nivel_bloom = st.select_slider("Nível Cognitivo", options=BLOOM_LEVELS, value="Analisar")
-            verbos_sugeridos = BLOOM_VERBS[nivel_bloom]
-            verbos_selecionados = st.multiselect("Verbos de Comando Sugeridos:", verbos_sugeridos, default=verbos_sugeridos[0] if verbos_sugeridos else None)
-            
-            observacoes = st.text_area("Observações/Instruções adicionais para a IA (opcional)")
-            submit_button = st.form_submit_button("🚀 Gerar Questão Completa")
+            verbos_sug = BLOOM_VERBS[nivel_bloom]
+            verbos_sel = st.multiselect("Verbos de Comando", verbos_sug, default=verbos_sug[:2])
+            obs = st.text_area("Observações (opcional)")
+            gerar = st.form_submit_button("🚀 Gerar Questão")
+        if gerar:
+            with st.spinner("Gerando..."):
+                system_prompt = """
+Você é docente especialista do INEP. Crie uma questão padrão ENADE com:
+1. Contextualização.
+2. Enunciado usando verbos de Bloom.
+3. 5 alternativas (A–E), 1 correta.
+4. Gabarito.
+5. Justificativas breves para cada alternativa.
+Linguagem formal e impessoal.
+"""
+                user_prompt = f"""
+Área: {st.session_state.escopo['area']}
+Curso: {st.session_state.escopo['curso']}
+Assunto: {st.session_state.escopo['assunto']}
+Perfil: {perfil}
+Competência: {competencia}
+Verbos: {', '.join(verbos_sel)}
+Observações: {obs}
 
-            if submit_button:
-                with st.spinner(f"Aguarde, o especialista do ENADE ({provedor_ia} - {model}) está trabalhando..."):
-                    system_prompt = """
-                    Você é um docente especialista do INEP. Sua tarefa é criar uma questão completa padrão ENADE em uma única etapa, retornando um único JSON.
-                    1. Crie uma breve **contextualização (situação-problema)** com base no texto-base e nos parâmetros.
-                    2. Com base na contextualização, elabore o **enunciado** usando os verbos de Bloom.
-                    3. Crie 5 **alternativas** (A-E), sendo apenas 1 correta. Os distratores devem ser plausíveis e baseados em erros comuns.
-                    4. Indique o **gabarito**.
-                    5. Forneça **justificativas** breves para CADA alternativa, explicando por que está certa ou errada.
-                    Siga rigorosamente as regras: linguagem formal, impessoal, foco em aplicação e sem termos absolutos.
-                    """
-                    user_prompt = f"""
-                    # DADOS PARA GERAÇÃO
-                    - Área: {st.session_state.escopo['area']}
-                    - Curso: {st.session_state.escopo['curso']}
-                    - Assunto: {st.session_state.escopo['assunto']}
-                    - Perfil do Egresso: {perfil}
-                    - Competência a ser Avaliada: {competencia}
-                    - Verbos de Bloom (foco): {', '.join(verbos_selecionados)}
-                    - Observações: {observacoes}
+TEXTO-BASE:
+{st.session_state.text_base}
 
-                    ## TEXTO-BASE
-                    {st.session_state.text_base_final}
+REFERÊNCIA:
+{st.session_state.referencia_final}
 
-                    ## FORMATO DE SAÍDA OBRIGATÓRIO (JSON):
-                    {{
-                      "contextualizacao": "...",
-                      "enunciado": "...",
-                      "alternativas": {{"A": "...", "B": "...", "C": "...", "D": "...", "E": "..."}},
-                      "gabarito": "Letra X",
-                      "justificativas": {{"A": "...", "B": "...", "C": "...", "D": "...", "E": "..."}}
-                    }}
-                    """
-                    raw_response = chamar_llm([{"role":"system","content":system_prompt}, {"role":"user","content":user_prompt}], provider=provedor_ia, model=model, temperature=0.5, use_json=True)
-                    
-                    if raw_response:
-                        try:
-                            # Gemini pode retornar o JSON dentro de um bloco de código markdown
-                            cleaned_response = raw_response.strip().replace("```json", "").replace("```", "")
-                            st.session_state.questao_gerada = json.loads(cleaned_response)
-                        except json.JSONDecodeError:
-                            st.error("A IA retornou uma resposta em formato inválido. Tente novamente.")
-                            st.expander("Ver resposta bruta da IA").write(raw_response)
-                            st.session_state.questao_gerada = None
-    else:
-        st.info("Preencha as etapas anteriores para habilitar a geração.")
+Saída em JSON com campos:
+"contextualizacao","enunciado","alternativas","gabarito","justificativas"
+"""
+                raw = chamar_llm(
+                    [{"role":"system","content":system_prompt},
+                     {"role":"user","content":user_prompt}],
+                    provider=provedor_ia, model=model,
+                    temperature=0.5, max_tokens=1500, use_json=True
+                )
+                if raw:
+                    try:
+                        cleaned = raw.strip().replace("```json", "").replace("```", "")
+                        q = json.loads(cleaned)
+                        st.session_state.questao_gerada = q
+                        # adicionar à lista
+                        registro = {
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                            "area": st.session_state.escopo["area"],
+                            "curso": st.session_state.escopo["curso"],
+                            "assunto": st.session_state.escopo["assunto"],
+                            "contextualizacao": q["contextualizacao"],
+                            "enunciado": q["enunciado"],
+                            "gabarito": q["gabarito"]
+                        }
+                        # alternativas e justificativas
+                        for lt in ["A","B","C","D","E"]:
+                            registro[f"alt_{lt}"] = q["alternativas"].get(lt, "")
+                            registro[f"just_{lt}"] = q["justificativas"].get(lt, "")
+                        st.session_state.lista_questoes.append(registro)
+                    except Exception:
+                        st.error("Não foi possível processar a resposta da IA.")
 
+# --- 5. Exibição e Download ---
 if st.session_state.questao_gerada:
-    st.header("5. Resultado e Ações")
     q = st.session_state.questao_gerada
-    
-    st.markdown(f"**Contextualização:**\n{q.get('contextualizacao', 'N/A')}")
-    st.markdown(f"**Enunciado:**\n{q.get('enunciado', 'N/A')}")
+    st.header("5. Resultado")
+    st.markdown(f"**Contextualização:**  \n{q.get('contextualizacao','')}")
+    st.markdown(f"**Enunciado:**  \n{q.get('enunciado','')}")
     st.subheader("Alternativas")
-    for letra, texto in q.get('alternativas', {}).items(): st.markdown(f"**{letra}.** {texto}")
-    st.success(f"**Gabarito:** {q.get('gabarito', 'N/A')}")
-    
-    with st.expander("Ver Justificativas"):
-        for letra, just in q.get('justificativas', {}).items(): st.markdown(f"**{letra}.** {just}")
+    for lt, txt in q["alternativas"].items():
+        st.markdown(f"**{lt}.** {txt}")
+    st.success(f"**Gabarito:** {q.get('gabarito','')}")
+    with st.expander("Justificativas"):
+        for lt, j in q["justificativas"].items():
+            st.markdown(f"**{lt}.** {j}")
 
-    st.subheader("Ações")
-    c1, c2, c3 = st.columns(3)
+    # preparar texto para download
+    text_content = []
+    text_content.append("CONTEXTUALIZAÇÃO:\n" + q["contextualizacao"])
+    text_content.append("\nENUNCIADO:\n" + q["enunciado"])
+    text_content.append("\nALTERNATIVAS:")
+    for lt, txt in q["alternativas"].items():
+        text_content.append(f"{lt}. {txt}")
+    text_content.append("\nGABARITO: " + q["gabarito"])
+    text_content.append("\nJUSTIFICATIVAS:")
+    for lt, j in q["justificativas"].items():
+        text_content.append(f"{lt}. {j}")
+    text_str = "\n".join(text_content)
 
-    doc = Document()
-    doc.add_heading(f"Questão ENADE - {st.session_state.escopo['curso']}", level=1)
-    doc.add_heading("Texto-Base", level=2); doc.add_paragraph(st.session_state.text_base_final); doc.add_paragraph(st.session_state.referencia_final)
-    doc.add_heading("Contextualização", level=2); doc.add_paragraph(q.get('contextualizacao', ''))
-    doc.add_heading("Enunciado", level=2); doc.add_paragraph(q.get('enunciado', ''))
-    doc.add_heading("Alternativas", level=2)
-    for letra, texto in q.get('alternativas', {}).items(): doc.add_paragraph(f"{letra}. {texto}")
-    doc.add_paragraph(f"\n**Gabarito:** {q.get('gabarito', '')}")
-    buffer = BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    c1.download_button("📥 Baixar em Word (.docx)", data=buffer, file_name="questao_enade.docx")
+    c1, c2 = st.columns(2)
+    c1.download_button(
+        "📄 Baixar Questão (TXT)",
+        data=text_str,
+        file_name=f"questao_{len(st.session_state.lista_questoes)}.txt",
+        mime="text/plain"
+    )
 
-    if c2.button("💾 Salvar no Banco de Questões"):
-        nova_entrada = pd.DataFrame([{"data": datetime.now().strftime("%Y-%m-%d %H:%M"), "curso": st.session_state.escopo['curso'], "assunto": st.session_state.escopo['assunto'], "questao_json": json.dumps(q, ensure_ascii=False)}])
-        db_path = "banco_questoes.csv"
-        banco_df = pd.read_csv(db_path) if os.path.exists(db_path) else pd.DataFrame()
-        banco_df = pd.concat([banco_df, nova_entrada], ignore_index=True)
-        banco_df.to_csv(db_path, index=False)
-        st.success("Questão salva no banco de dados local!")
-
-    if c3.button("🔄 Gerar Nova Questão (Limpar Tudo)"):
-        for key in list(st.session_state.keys()):
-            if key not in ['escopo']: del st.session_state[key]
-        st.rerun()
-
-if os.path.exists("banco_questoes.csv"):
-    with st.expander("📖 Ver Banco de Questões Salvas"):
-        df_banco = pd.read_csv("banco_questoes.csv")
-        st.dataframe(df_banco)
+    # se houver pelo menos uma questão na lista, oferecer download de Excel
+    if st.session_state.lista_questoes:
+        df_all = pd.DataFrame(st.session_state.lista_questoes)
+        towrite = BytesIO()
+        df_all.to_excel(towrite, index=False, sheet_name="Questões")
+        towrite.seek(0)
+        c2.download_button(
+            "📥 Baixar Todas as Questões (.xlsx)",
+            data=towrite,
+            file_name="todas_questoes_enade.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
