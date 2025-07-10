@@ -40,7 +40,7 @@ BLOOM_VERBS = {
 
 # --- CONFIG STREAMLIT ---
 st.set_page_config(
-    page_title="Gerador de Questões ENADE v2.1",
+    page_title="Gerador de Questões ENADE v2.2",
     page_icon="🎓",
     layout="wide"
 )
@@ -141,6 +141,21 @@ with st.container():
     assunto = c3.text_input("Assunto central", "")
     st.session_state.escopo = {"area": area, "curso": curso, "assunto": assunto}
 
+# --- 1.1 Seletor de Tipo de Questão ---
+tipos_questao = {
+    "Múltipla Escolha Tradicional": "Uma resposta (apenas 1 alternativa correta)",
+    "Múltiplas Respostas":    "Selecione mais de uma alternativa como correta",
+    "Complementação":         "Complete a frase no enunciado",
+    "Interpretação":          "Interprete um texto/gráfico/tabela",
+    "Afirmação-Razão":        "Avalie afirmação e razão",
+    "Resposta Múltipla":      "Selecione todas as corretas ou agrupe-as"
+}
+st.session_state.question_type = st.selectbox(
+    "Tipo de questão",
+    options=list(tipos_questao.keys()),
+    format_func=lambda k: f"{k}: {tipos_questao[k]}"
+)
+
 # --- 2. Texto-Base (Opcional) ---
 with st.container():
     st.header("2. Texto-Base (Opcional)")
@@ -184,29 +199,37 @@ with st.container():
                         st.session_state.text_base = chamar_llm(prompts, provedor, modelo, temperature=0.4, max_tokens=250)
                         st.success("Resumo pronto!")
         else:
-            if st.button("🔍 Buscar artigos"):
-                with st.spinner("Buscando..."):
-                    st.session_state.search_results = search_articles(assunto)
-            if st.session_state.search_results:
-                opts = [f"{r['title']} ({r['url']})" for r in st.session_state.search_results]
-                sel = st.selectbox("Selecione:", opts)
-                if st.button("▶️ Usar artigo"):
-                    art = st.session_state.search_results[opts.index(sel)]
-                    with st.spinner("Extraindo e resumindo..."):
+            try:
+                if st.button("🔍 Buscar artigos", key="search_btn"):
+                    st.session_state.search_results = []
+                    with st.spinner("Buscando artigos..."):
+                        resultados = search_articles(assunto, num=5)
+                        if resultados:
+                            st.session_state.search_results = resultados
+                        else:
+                            st.warning("Nenhum resultado encontrado para esse assunto.")
+                if st.session_state.search_results:
+                    opts = [f"{r['title']} — {r['url']}" for r in st.session_state.search_results]
+                    sel = st.selectbox("Selecione um artigo", opts, key="sel_artigo")
+                    if st.button("▶️ Usar artigo", key="use_btn"):
+                        art = st.session_state.search_results[opts.index(sel)]
                         cont, tit, aut = extrair_conteudo_url(art["url"])
                         if cont:
-                            prompts = [
-                                {"role": "system", "content": "Você gera resumos concisos para ENADE."},
-                                {"role": "user", "content": f"Resuma em até 3 frases para situação-problema ENADE:\n\n{cont}"}
-                            ]
-                            st.session_state.text_base = chamar_llm(prompts, provedor, modelo, temperature=0.4, max_tokens=250)
-                            st.session_state.fonte_info = {
-                                "titulo": tit,
-                                "autor": aut,
-                                "veiculo": art["url"].split("/")[2],
-                                "link": art["url"]
-                            }
-                            st.success("Resumo pronto!")
+                            with st.spinner("Extraindo e resumindo..."):
+                                prompts = [
+                                    {"role": "system", "content": "Você gera resumos concisos para ENADE."},
+                                    {"role": "user", "content": f"Resuma em até 3 frases para situação-problema ENADE:\n\n{cont}"}
+                                ]
+                                st.session_state.text_base = chamar_llm(prompts, provedor, modelo, temperature=0.4, max_tokens=250)
+                                st.session_state.fonte_info = {
+                                    "titulo": tit,
+                                    "autor": aut,
+                                    "veiculo": art["url"].split("/")[2],
+                                    "link": art["url"]
+                                }
+                                st.success("Resumo pronto!")
+            except Exception as e:
+                st.error(f"Falha na busca: {e}")
 
 # --- 3. Texto-Base e Referência ---
 if st.session_state.text_base:
@@ -259,18 +282,16 @@ if st.session_state.text_base and (st.session_state.auto or st.session_state.ref
 
     if gerar:
         with st.spinner("Gerando…"):
-            referencia_texto = ""
-            if not st.session_state.auto:
-                referencia_texto = f"\nREFERÊNCIA:\n{st.session_state.ref_final}\n"
-
+            question_type = st.session_state.question_type
+            # Ajustes no system prompt conforme tipo
             sys_p = """
-Você é docente especialista em produzir questão no estilo EANDE. Ao confeccionar a questão, ela deve:
+Você é docente especialista em produzir questão no estilo ENADE. Ao confeccionar a questão, ela deve:
 - Ser inédita e seguir a encomenda da banca (perfil, competência e conteúdo).
 - Ter texto-base relevante e enunciado claro e afirmativo.
 - Ser proibido solicitar alternativa "incorreta" ou "exceto".
 - Em múltipla escolha: apenas 1 correta e distratores plausíveis.
 - Em discursivos: tarefa complexa (análise, argumentação) e apresentar padrão de resposta detalhado.
-- Utilizar linguagem impessoal (norma-padrão) e citar todas as fontes externas (texte e imagens) no padrão ABNT.
+- Utilizar linguagem impessoal (norma-padrão) e citar todas as fontes externas no padrão ABNT.
 
 Saída em texto puro, no formato:
 
@@ -295,12 +316,25 @@ C. …
 D. …
 E. …
 """
+            if question_type == "Múltiplas Respostas":
+                sys_p += "\n• Em múltiplas respostas: indique no GABARITO todas as letras corretas (ex.: A,C)."
+            elif question_type == "Complementação":
+                sys_p += "\n• Em complementação: utilize lacunas '___' no enunciado e opções que completem."
+            elif question_type == "Afirmação-Razão":
+                sys_p += "\n• Em afirmação-razão: verifique verdade das duas partes e justificativa."
+            # outros tipos podem ser estendidos aqui…
+
+            referencia_texto = ""
+            if not st.session_state.auto:
+                referencia_texto = f"\nREFERÊNCIA:\n{st.session_state.ref_final}\n"
+
             usr_p = f"""
 Área: {area}
 Curso: {curso}
 Assunto: {assunto}
 Perfil: {perfil}
 Competência: {comp}
+Tipo de questão: {question_type}
 Dificuldade: {dificuldade}/5
 Verbos de comando: {', '.join(verbs)}
 Observações: {obs}
@@ -308,10 +342,11 @@ Observações: {obs}
 TEXTO-BASE:
 {st.session_state.text_base}
 {referencia_texto}
-Por favor, siga EXATAMENTE o formato acima e não altere o texto-base. Uso o texto-base na forma original. 
-Não incluir as palavras NA SAÍDA: CONTEXTUALIZAÇÃO e TEXTO-BASE.
-Questão no formato objetiva.
+
+Por favor, siga EXATAMENTE o formato acima e não altere o texto-base. Não incluir as palavras NA SAÍDA: CONTEXTUALIZAÇÃO e TEXTO-BASE.
+Questão no formato {question_type}.
 """
+
             out = chamar_llm(
                 [{"role": "system", "content": sys_p},
                  {"role": "user",   "content": usr_p}],
@@ -330,7 +365,6 @@ if st.session_state.questoes:
         st.markdown(f"---\n**Questão #{i}**\n```\n{q}\n```")
 
     c1, c2, c3 = st.columns(3)
-
     c1.download_button(
         "📄 Baixar última (.txt)",
         "\n\n".join(st.session_state.questoes[-1:]),
