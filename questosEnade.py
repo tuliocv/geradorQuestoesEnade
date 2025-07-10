@@ -40,7 +40,7 @@ BLOOM_VERBS = {
 
 # --- CONFIG STREAMLIT ---
 st.set_page_config(
-    page_title="Gerador de Questões ENADE v2.4",
+    page_title="Gerador de Questões ENADE v2.5",
     page_icon="🎓",
     layout="wide"
 )
@@ -119,21 +119,16 @@ def chamar_llm(prompts, prov, mdl, temperature=0.7, max_tokens=2000):
         return resp.text
 
 def search_articles(query, num=5):
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept-Language": "pt-BR,pt;q=0.9"
-    }
+    headers = {"User-Agent": "Mozilla/5.0", "Accept-Language": "pt-BR,pt;q=0.9"}
     params = {"q": query, "hl": "pt-BR", "gl": "br", "num": num}
     r = requests.get("https://www.google.com/search", headers=headers, params=params, timeout=10)
     soup = BeautifulSoup(r.text, "html.parser")
     results = []
-    # seletor principal
     for block in soup.select("div.yuRUbf")[:num]:
         a = block.find("a", href=True)
         h3 = block.find("h3")
         if a and h3:
             results.append({"title": h3.get_text(), "url": a["href"]})
-    # fallback
     if not results:
         for g in soup.select("div.g")[:num]:
             a = g.find("a", href=True)
@@ -156,16 +151,13 @@ with st.container():
 with st.container():
     st.header("1.1 Tipo de Questão")
     tipos_questao = {
-        "Múltipla Escolha Tradicional": "1 alternativa correta",
-        "Múltiplas Respostas":          "mais de uma correta",
-        "Complementação":               "complete a frase",
-        "Interpretação":                "interprete texto/gráfico",
-        "Afirmação-Razão":              "avalie afirmação e razão",
-        "Resposta Múltipla":            "selecionar todas/agrupá-las"
+        "Múltipla Escolha Tradicional": "apresentar enunciado + alternativas (1 correta)",
+        "Múltiplas Respostas":          "enunciado + alternativas (mais de uma correta)",
+        "Complementação":               "frase com lacuna '___', alternativas completam",
+        "Afirmação-Razão":              "afirmação e razão, avaliar verdade e justificativa",
+        "Resposta Múltipla":            "selecionar/agrupar várias corretas"
     }
-    # valor default
     st.session_state.setdefault("question_type", list(tipos_questao.keys())[0])
-    # widget
     question_type = st.selectbox(
         "Selecione o tipo de questão",
         options=list(tipos_questao.keys()),
@@ -183,18 +175,33 @@ with st.container():
     )
 
     if opc.startswith("Não"):
-        if not st.session_state.auto:
-            with st.spinner("Gerando texto-base automaticamente..."):
+        # sempre permitir nova contextualização
+        if st.button("Gerar contextualização"):
+            with st.spinner("Gerando contextualização..."):
                 prompts = [
-                    {"role": "system",
-                     "content": f"Você é um docente do {curso} que produz textos-base contextualizados para questões do ENADE."},
-                    {"role": "user",
-                     "content": f"Gere um texto com no mínimo 5 frases para situação-problema em Área: {area}, Curso: {curso}, Assunto: {assunto}."}
+                    {
+                        "role": "system",
+                        "content": (
+                            f"Você é um docente do {curso} que produz textos-base "
+                            "contextualizados para questões do ENADE. Esses textos devem "
+                            "possuir complexidade e utilizar conceitos e definições da área."
+                        )
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Gere um texto com no mínimo 5 frases para situação-"
+                            f"problema da questão ENADE em Área: {area}, Curso: {curso}, "
+                            f"Assunto: {assunto}. Não inclua nenhum comentário, apenas "
+                            "o texto-base como saída."
+                        )
+                    }
                 ]
                 tb = chamar_llm(prompts, provedor, modelo, temperature=0.5, max_tokens=300)
                 st.session_state.text_base = tb or ""
                 st.session_state.auto = True
-        st.success("Texto-base gerado!")
+        if st.session_state.text_base:
+            st.success("Contextualização gerada!")
     else:
         st.session_state.auto = False
         modo = st.radio(
@@ -210,7 +217,7 @@ with st.container():
                     if txt:
                         prompts = [
                             {"role": "system", "content": "Você gera resumos concisos para ENADE."},
-                            {"role": "user", "content": f"Resuma em até 3 frases para situação-problema:\n\n{txt}"}
+                            {"role": "user",   "content": f"Resuma em até 7 frases para situação-problema:\n\n{txt}"}
                         ]
                         st.session_state.text_base = chamar_llm(prompts, provedor, modelo, temperature=0.4, max_tokens=250)
                         st.success("Resumo pronto!")
@@ -234,7 +241,7 @@ with st.container():
                             with st.spinner("Extraindo e resumindo..."):
                                 prompts = [
                                     {"role": "system", "content": "Você gera resumos concisos para ENADE."},
-                                    {"role": "user", "content": f"Resuma em até 3 frases para situação-problema:\n\n{cont}"}
+                                    {"role": "user",   "content": f"Resuma em até 6 frases para situação-problema:\n\n{cont}"}
                                 ]
                                 st.session_state.text_base = chamar_llm(prompts, provedor, modelo, temperature=0.4, max_tokens=250)
                                 st.session_state.fonte_info = {
@@ -285,21 +292,25 @@ if st.session_state.text_base and (st.session_state.auto or st.session_state.ref
 
     if gerar:
         with st.spinner("Gerando…"):
-            qt   = st.session_state.question_type
+            qt = st.session_state.question_type
             sys_p = """
 Você é docente especialista em produzir questão no estilo ENADE.
 - Enunciado claro, usando texto-base, linguagem impessoal.
 - Alternativas e gabarito conforme tipo de questão.
 - Citações no padrão ABNT.
-Saída em texto puro, no formato: Contextualização, Enunciado, Alternativas, Gabarito e Justificativas.
+Saída em texto puro no formato: Contextualização, Enunciado, Alternativas, Gabarito e Justificativas.
 """
-            # ajustes por tipo
-            if qt == "Múltiplas Respostas":
-                sys_p += "\n• No gabarito, liste todas as letras corretas (ex.: A,C)."
+            # instruções detalhadas para cada tipo
+            if qt == "Múltipla Escolha Tradicional":
+                sys_p += "\n• Tipo Múltipla Escolha Tradicional: enunciado seguido de 5 alternativas, apenas 1 correta e 4 distratores plausíveis."
+            elif qt == "Múltiplas Respostas":
+                sys_p += "\n• Tipo Múltiplas Respostas: enunciado com 5 alternativas, mais de uma correta; no Gabarito liste todas separadas por vírgula (ex.: A,C)."
             elif qt == "Complementação":
-                sys_p += "\n• Use ‘___’ no enunciado e opções que completem."
+                sys_p += "\n• Tipo Complementação: use '___' para lacuna no enunciado; alternativas completam corretamente a frase."
             elif qt == "Afirmação-Razão":
-                sys_p += "\n• Avalie verdade e justificativa de afirmação e razão."
+                sys_p += "\n• Tipo Afirmação-Razão: apresente afirmação e razão; o aluno julga se cada uma é verdadeira e se a razão justifica a afirmação; no Gabarito use: 'A verdadeira, R verdadeira e justifica', etc."
+            elif qt == "Resposta Múltipla":
+                sys_p += "\n• Tipo Resposta Múltipla: apresente várias alternativas que podem ser agrupadas ou selecionadas múltiplas como corretas; indique no Gabarito todas as relações ou corretas."
 
             ref_txt = "" if st.session_state.auto else f"\nREFERÊNCIA:\n{st.session_state.ref_final}\n"
             usr_p = f"""
@@ -317,12 +328,13 @@ TEXTO-BASE:
 {st.session_state.text_base}
 {ref_txt}
 
-Siga EXATAMENTE o formato acima e não altere o texto-base.
+Por favor, siga EXATAMENTE o formato e não altere o texto-base.
 """
             out = chamar_llm(
                 [{"role": "system", "content": sys_p},
                  {"role": "user",   "content": usr_p}],
-                provedor, modelo, temperature=0.5, max_tokens=1000
+                provedor, modelo,
+                temperature=0.5, max_tokens=1000
             )
             if out:
                 st.session_state.questoes.append(out)
