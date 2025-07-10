@@ -154,7 +154,7 @@ with st.container():
         if not st.session_state.auto:
             with st.spinner("Gerando texto-base automaticamente..."):
                 prompts = [
-                    {"role": "system", "content": f"Você é um docente do {curso} que produz textos-base contextualizados para questões do ENADE."},
+                    {"role": "system", "content": f"Você é um docente do {curso} que produz textos-base contextualizados para questões do ENADE. Esses textos devem possuir complexidade e utilizar conceitos e definições da área."},
                     {"role": "user", "content":
                         f"Gere um texto com no mínimo 5 frases para situação-problema da questão ENADE em "
                         f"Área: {area}, Curso: {curso}, Assunto: {assunto}."
