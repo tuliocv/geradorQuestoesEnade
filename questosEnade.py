@@ -152,7 +152,6 @@ with st.container():
     st.header("1.1 Tipo de Questão")
     tipos_questao = {
         "Múltipla Escolha Tradicional": "apresentar enunciado + alternativas (1 correta)",
-        "Múltiplas Respostas":          "enunciado + alternativas (mais de uma correta)",
         "Complementação":               "frase com lacuna '___', alternativas completam",
         "Afirmação-Razão":              "afirmação e razão, avaliar verdade e justificativa",
         "Resposta Múltipla":            "selecionar/agrupar várias corretas"
@@ -294,23 +293,24 @@ if st.session_state.text_base and (st.session_state.auto or st.session_state.ref
         with st.spinner("Gerando…"):
             qt = st.session_state.question_type
             sys_p = """
-Você é docente especialista em produzir questão no estilo ENADE.
-- Enunciado claro, usando texto-base, linguagem impessoal.
-- Alternativas e gabarito conforme tipo de questão.
-- Citações no padrão ABNT.
+Você é docente especialista em produzir questão no estilo EANDE. Ao confeccionar a questão, ela deve:
+- Ser inédita e seguir a encomenda da banca (perfil, competência e conteúdo).
+- Ter texto-base relevante e enunciado claro e afirmativo.
+- Ser proibido solicitar alternativa "incorreta" ou "exceto".
+- Em múltipla escolha: apenas 1 correta e distratores plausíveis.
+- Em discursivos: tarefa complexa (análise, argumentação) e apresentar padrão de resposta detalhado.
+- Utilizar linguagem impessoal (norma-padrão) e citar todas as fontes externas (texte e imagens) no padrão ABNT.
 Saída em texto puro no formato: Contextualização, Enunciado, Alternativas, Gabarito e Justificativas.
 """
             # instruções detalhadas para cada tipo
             if qt == "Múltipla Escolha Tradicional":
                 sys_p += "\n• Tipo Múltipla Escolha Tradicional: enunciado seguido de 5 alternativas, apenas 1 correta e 4 distratores plausíveis."
-            elif qt == "Múltiplas Respostas":
-                sys_p += "\n• Tipo Múltiplas Respostas: enunciado com 5 alternativas, mais de uma correta; no Gabarito liste todas separadas por vírgula (ex.: A,C)."
             elif qt == "Complementação":
                 sys_p += "\n• Tipo Complementação: use '___' para lacuna no enunciado; alternativas completam corretamente a frase."
             elif qt == "Afirmação-Razão":
                 sys_p += "\n• Tipo Afirmação-Razão: apresente afirmação e razão; o aluno julga se cada uma é verdadeira e se a razão justifica a afirmação; no Gabarito use: 'A verdadeira, R verdadeira e justifica', etc."
             elif qt == "Resposta Múltipla":
-                sys_p += "\n• Tipo Resposta Múltipla: apresente várias alternativas que podem ser agrupadas ou selecionadas múltiplas como corretas; indique no Gabarito todas as relações ou corretas."
+                sys_p += "\n• Tipo Resposta Múltipla: apresente 3 afirmações numeradas sobre o tema proposto. A resposta correta deverá indicar quais números das afirmações que estão corretas."
 
             ref_txt = "" if st.session_state.auto else f"\nREFERÊNCIA:\n{st.session_state.ref_final}\n"
             usr_p = f"""
@@ -323,6 +323,29 @@ Tipo de questão: {qt}
 Dificuldade: {dificuldade}/5
 Verbos: {', '.join(verbs)}
 Observações: {obs}
+
+Saída em texto puro, no formato:
+
+<CONTEXTUALIZAÇÃO>
+
+<ENUNCIADO>
+
+ALTERNATIVAS:
+A. …
+B. …
+C. …
+D. …
+E. …
+
+GABARITO:
+Letra X
+
+JUSTIFICATIVAS:
+A. …
+B. …
+C. …
+D. …
+E. …
 
 TEXTO-BASE:
 {st.session_state.text_base}
