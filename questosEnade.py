@@ -40,7 +40,7 @@ BLOOM_VERBS = {
 
 # --- CONFIG STREAMLIT ---
 st.set_page_config(
-    page_title="Gerador de Questões ENADE v2.2",
+    page_title="Gerador de Questões ENADE v2.4",
     page_icon="🎓",
     layout="wide"
 )
@@ -119,16 +119,27 @@ def chamar_llm(prompts, prov, mdl, temperature=0.7, max_tokens=2000):
         return resp.text
 
 def search_articles(query, num=5):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    params = {"q": query, "num": num}
+    headers = {
+        "User-Agent": "Mozilla/5.0",
+        "Accept-Language": "pt-BR,pt;q=0.9"
+    }
+    params = {"q": query, "hl": "pt-BR", "gl": "br", "num": num}
     r = requests.get("https://www.google.com/search", headers=headers, params=params, timeout=10)
     soup = BeautifulSoup(r.text, "html.parser")
     results = []
-    for g in soup.select("div.g")[:num]:
-        a = g.find("a", href=True)
-        h3 = g.find("h3")
+    # seletor principal
+    for block in soup.select("div.yuRUbf")[:num]:
+        a = block.find("a", href=True)
+        h3 = block.find("h3")
         if a and h3:
             results.append({"title": h3.get_text(), "url": a["href"]})
+    # fallback
+    if not results:
+        for g in soup.select("div.g")[:num]:
+            a = g.find("a", href=True)
+            h3 = g.find("h3")
+            if a and h3:
+                results.append({"title": h3.get_text(), "url": a["href"]})
     return results
 
 # --- 1. Definição do Escopo ---
@@ -141,20 +152,26 @@ with st.container():
     assunto = c3.text_input("Assunto central", "")
     st.session_state.escopo = {"area": area, "curso": curso, "assunto": assunto}
 
-# --- 1.1 Seletor de Tipo de Questão ---
-tipos_questao = {
-    "Múltipla Escolha Tradicional": "Uma resposta (apenas 1 alternativa correta)",
-    "Múltiplas Respostas":    "Selecione mais de uma alternativa como correta",
-    "Complementação":         "Complete a frase no enunciado",
-    "Interpretação":          "Interprete um texto/gráfico/tabela",
-    "Afirmação-Razão":        "Avalie afirmação e razão",
-    "Resposta Múltipla":      "Selecione todas as corretas ou agrupe-as"
-}
-st.session_state.question_type = st.selectbox(
-    "Tipo de questão",
-    options=list(tipos_questao.keys()),
-    format_func=lambda k: f"{k}: {tipos_questao[k]}"
-)
+# --- 1.1 Tipo de Questão ---
+with st.container():
+    st.header("1.1 Tipo de Questão")
+    tipos_questao = {
+        "Múltipla Escolha Tradicional": "1 alternativa correta",
+        "Múltiplas Respostas":          "mais de uma correta",
+        "Complementação":               "complete a frase",
+        "Interpretação":                "interprete texto/gráfico",
+        "Afirmação-Razão":              "avalie afirmação e razão",
+        "Resposta Múltipla":            "selecionar todas/agrupá-las"
+    }
+    # valor default
+    st.session_state.setdefault("question_type", list(tipos_questao.keys())[0])
+    # widget
+    question_type = st.selectbox(
+        "Selecione o tipo de questão",
+        options=list(tipos_questao.keys()),
+        format_func=lambda k: f"{k}: {tipos_questao[k]}",
+        key="question_type"
+    )
 
 # --- 2. Texto-Base (Opcional) ---
 with st.container():
@@ -170,15 +187,14 @@ with st.container():
             with st.spinner("Gerando texto-base automaticamente..."):
                 prompts = [
                     {"role": "system",
-                     "content": f"Você é um docente do {curso} que produz textos-base contextualizados para questões do ENADE. Esses textos devem possuir complexidade e utilizar conceitos e definições da área."},
+                     "content": f"Você é um docente do {curso} que produz textos-base contextualizados para questões do ENADE."},
                     {"role": "user",
-                     "content": f"Gere um texto com no mínimo 5 frases para situação-problema da questão ENADE em Área: {area}, Curso: {curso}, Assunto: {assunto}. Não inclua nenhum comentário, apenas o texto-base como saída."}
+                     "content": f"Gere um texto com no mínimo 5 frases para situação-problema em Área: {area}, Curso: {curso}, Assunto: {assunto}."}
                 ]
                 tb = chamar_llm(prompts, provedor, modelo, temperature=0.5, max_tokens=300)
                 st.session_state.text_base = tb or ""
                 st.session_state.auto = True
         st.success("Texto-base gerado!")
-
     else:
         st.session_state.auto = False
         modo = st.radio(
@@ -194,7 +210,7 @@ with st.container():
                     if txt:
                         prompts = [
                             {"role": "system", "content": "Você gera resumos concisos para ENADE."},
-                            {"role": "user", "content": f"Resuma em até 3 frases para situação-problema ENADE:\n\n{txt}"}
+                            {"role": "user", "content": f"Resuma em até 3 frases para situação-problema:\n\n{txt}"}
                         ]
                         st.session_state.text_base = chamar_llm(prompts, provedor, modelo, temperature=0.4, max_tokens=250)
                         st.success("Resumo pronto!")
@@ -203,11 +219,11 @@ with st.container():
                 if st.button("🔍 Buscar artigos", key="search_btn"):
                     st.session_state.search_results = []
                     with st.spinner("Buscando artigos..."):
-                        resultados = search_articles(assunto, num=5)
-                        if resultados:
-                            st.session_state.search_results = resultados
+                        res = search_articles(assunto, num=5)
+                        if res:
+                            st.session_state.search_results = res
                         else:
-                            st.warning("Nenhum resultado encontrado para esse assunto.")
+                            st.warning("Nenhum resultado encontrado.")
                 if st.session_state.search_results:
                     opts = [f"{r['title']} — {r['url']}" for r in st.session_state.search_results]
                     sel = st.selectbox("Selecione um artigo", opts, key="sel_artigo")
@@ -218,18 +234,16 @@ with st.container():
                             with st.spinner("Extraindo e resumindo..."):
                                 prompts = [
                                     {"role": "system", "content": "Você gera resumos concisos para ENADE."},
-                                    {"role": "user", "content": f"Resuma em até 3 frases para situação-problema ENADE:\n\n{cont}"}
+                                    {"role": "user", "content": f"Resuma em até 3 frases para situação-problema:\n\n{cont}"}
                                 ]
                                 st.session_state.text_base = chamar_llm(prompts, provedor, modelo, temperature=0.4, max_tokens=250)
                                 st.session_state.fonte_info = {
-                                    "titulo": tit,
-                                    "autor": aut,
-                                    "veiculo": art["url"].split("/")[2],
-                                    "link": art["url"]
+                                    "titulo": tit, "autor": aut,
+                                    "veiculo": art["url"].split("/")[2], "link": art["url"]
                                 }
                                 st.success("Resumo pronto!")
             except Exception as e:
-                st.error(f"Falha na busca: {e}")
+                st.error(f"Erro ao buscar artigos: {e}")
 
 # --- 3. Texto-Base e Referência ---
 if st.session_state.text_base:
@@ -240,118 +254,75 @@ if st.session_state.text_base:
         height=200,
         key="text_base_editavel"
     )
-
     if not st.session_state.auto:
         info = st.session_state.get("fonte_info", {})
         c1, c2, c3, c4 = st.columns(4)
-        autor = c1.text_input("Autor (SOBRENOME, Nome)", value=info.get("autor", ""))
-        titulo = c2.text_input("Título", value=info.get("titulo", ""))
-        veiculo = c3.text_input("Veículo", value=info.get("veiculo", ""))
+        autor    = c1.text_input("Autor (SOBRENOME, Nome)", value=info.get("autor",""))
+        titulo   = c2.text_input("Título", value=info.get("titulo",""))
+        veiculo  = c3.text_input("Veículo", value=info.get("veiculo",""))
         data_pub = c4.text_input("Data de publicação", placeholder="dd mmm. aaaa")
         if autor and titulo and veiculo and data_pub:
             hoje = datetime.now()
-            meses = ["jan.", "fev.", "mar.", "abr.", "mai.", "jun.",
-                     "jul.", "ago.", "set.", "out.", "nov.", "dez."]
+            meses = ["jan.","fev.","mar.","abr.","mai.","jun.","jul.","ago.","set.","out.","nov.","dez."]
             acesso = f"{hoje.day} {meses[hoje.month-1]}. {hoje.year}"
             st.session_state.ref_final = (
                 f"{autor}. {titulo}. {veiculo}, {data_pub}. "
                 f"Disponível em: <{info.get('link','N/D')}>. Acesso em: {acesso}."
             )
-            st.text_area(
-                "Referência ABNT:",
-                st.session_state.ref_final,
-                height=80,
-                key="ref_display"
-            )
+            st.text_area("Referência ABNT:", st.session_state.ref_final, height=80, key="ref_display")
 
 # --- 4. Parâmetros e Geração da Questão ---
 if st.session_state.text_base and (st.session_state.auto or st.session_state.ref_final):
     st.header("4. Parâmetros e Geração")
     with st.form("frm"):
-        perfil = st.text_input("Perfil do egresso")
-        comp = st.text_input("Competência")
-        niv = st.select_slider("Nível Bloom", options=BLOOM_LEVELS, value="Analisar")
-        dificuldade = st.slider(
-            "Nível de dificuldade da questão",
-            min_value=1, max_value=5, value=3,
-            help="1 = Muito fácil; 5 = Muito difícil"
-        )
-        verbs = st.multiselect("Verbos de comando", BLOOM_VERBS[niv], default=BLOOM_VERBS[niv][:2])
-        obs = st.text_area("Observações (opcional)")
-        gerar = st.form_submit_button("🚀 Gerar Questão")
+        perfil      = st.text_input("Perfil do egresso")
+        comp        = st.text_input("Competência")
+        niv         = st.select_slider("Nível Bloom", options=BLOOM_LEVELS, value="Analisar")
+        dificuldade = st.slider("Nível de dificuldade", 1, 5, 3, help="1=Muito fácil;5=Muito difícil")
+        verbs       = st.multiselect("Verbos de comando", BLOOM_VERBS[niv], default=BLOOM_VERBS[niv][:2])
+        obs         = st.text_area("Observações (opcional)")
+        gerar       = st.form_submit_button("🚀 Gerar Questão")
 
     if gerar:
         with st.spinner("Gerando…"):
-            question_type = st.session_state.question_type
-            # Ajustes no system prompt conforme tipo
+            qt   = st.session_state.question_type
             sys_p = """
-Você é docente especialista em produzir questão no estilo ENADE. Ao confeccionar a questão, ela deve:
-- Ser inédita e seguir a encomenda da banca (perfil, competência e conteúdo).
-- Ter texto-base relevante e enunciado claro e afirmativo.
-- Ser proibido solicitar alternativa "incorreta" ou "exceto".
-- Em múltipla escolha: apenas 1 correta e distratores plausíveis.
-- Em discursivos: tarefa complexa (análise, argumentação) e apresentar padrão de resposta detalhado.
-- Utilizar linguagem impessoal (norma-padrão) e citar todas as fontes externas no padrão ABNT.
-
-Saída em texto puro, no formato:
-
-<CONTEXTUALIZAÇÃO>
-
-<ENUNCIADO>
-
-ALTERNATIVAS:
-A. …
-B. …
-C. …
-D. …
-E. …
-
-GABARITO:
-Letra X
-
-JUSTIFICATIVAS:
-A. …
-B. …
-C. …
-D. …
-E. …
+Você é docente especialista em produzir questão no estilo ENADE.
+- Enunciado claro, usando texto-base, linguagem impessoal.
+- Alternativas e gabarito conforme tipo de questão.
+- Citações no padrão ABNT.
+Saída em texto puro, no formato: Contextualização, Enunciado, Alternativas, Gabarito e Justificativas.
 """
-            if question_type == "Múltiplas Respostas":
-                sys_p += "\n• Em múltiplas respostas: indique no GABARITO todas as letras corretas (ex.: A,C)."
-            elif question_type == "Complementação":
-                sys_p += "\n• Em complementação: utilize lacunas '___' no enunciado e opções que completem."
-            elif question_type == "Afirmação-Razão":
-                sys_p += "\n• Em afirmação-razão: verifique verdade das duas partes e justificativa."
-            # outros tipos podem ser estendidos aqui…
+            # ajustes por tipo
+            if qt == "Múltiplas Respostas":
+                sys_p += "\n• No gabarito, liste todas as letras corretas (ex.: A,C)."
+            elif qt == "Complementação":
+                sys_p += "\n• Use ‘___’ no enunciado e opções que completem."
+            elif qt == "Afirmação-Razão":
+                sys_p += "\n• Avalie verdade e justificativa de afirmação e razão."
 
-            referencia_texto = ""
-            if not st.session_state.auto:
-                referencia_texto = f"\nREFERÊNCIA:\n{st.session_state.ref_final}\n"
-
+            ref_txt = "" if st.session_state.auto else f"\nREFERÊNCIA:\n{st.session_state.ref_final}\n"
             usr_p = f"""
 Área: {area}
 Curso: {curso}
 Assunto: {assunto}
 Perfil: {perfil}
 Competência: {comp}
-Tipo de questão: {question_type}
+Tipo de questão: {qt}
 Dificuldade: {dificuldade}/5
-Verbos de comando: {', '.join(verbs)}
+Verbos: {', '.join(verbs)}
 Observações: {obs}
 
 TEXTO-BASE:
 {st.session_state.text_base}
-{referencia_texto}
+{ref_txt}
 
-Por favor, siga EXATAMENTE o formato acima e não altere o texto-base. Não incluir as palavras NA SAÍDA: CONTEXTUALIZAÇÃO e TEXTO-BASE.
-Questão no formato {question_type}.
+Siga EXATAMENTE o formato acima e não altere o texto-base.
 """
-
             out = chamar_llm(
                 [{"role": "system", "content": sys_p},
                  {"role": "user",   "content": usr_p}],
-                provedor, modelo,
-                temperature=0.5, max_tokens=1000
+                provedor, modelo, temperature=0.5, max_tokens=1000
             )
             if out:
                 st.session_state.questoes.append(out)
@@ -359,7 +330,7 @@ Questão no formato {question_type}.
 
 # --- 5. Resultados, Download & Nova Questão ---
 if st.session_state.questoes:
-    st.warning("O modelo pode cometer erros. Verifique as respostas antes de usar.")
+    st.warning("⚠️ Revise antes de usar.")
     st.header("5. Questões Geradas")
     for i, q in enumerate(st.session_state.questoes, 1):
         st.markdown(f"---\n**Questão #{i}**\n```\n{q}\n```")
@@ -371,7 +342,6 @@ if st.session_state.questoes:
         f"questao_{len(st.session_state.questoes)}.txt",
         "text/plain"
     )
-
     df_all = pd.DataFrame({"questão": st.session_state.questoes})
     to_xl = BytesIO()
     df_all.to_excel(to_xl, index=False, sheet_name="Questões")
@@ -382,7 +352,6 @@ if st.session_state.questoes:
         "todas_questoes_enade.xlsx",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-
     if c3.button("💾 Salvar banco e Nova Questão"):
         df_all.to_excel("banco_questoes.xlsx", index=False, sheet_name="Questões")
         st.success("Banco salvo em banco_questoes.xlsx")
